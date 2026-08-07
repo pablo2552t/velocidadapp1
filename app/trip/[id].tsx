@@ -1,0 +1,445 @@
+import { Ionicons } from '@expo/vector-icons';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import MapView, { Marker } from 'react-native-maps';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { ElevationChart, SpeedChart } from '@/components/charts';
+import { SpeedTrace } from '@/components/SpeedTrace';
+import {
+  Badge,
+  Divider,
+  EmptyState,
+  GlassCard,
+  SectionTitle,
+  StatGrid,
+  StatTile,
+} from '@/components/ui';
+import { Trip, deleteTrip, getTrip } from '@/services/database';
+import { useSettings } from '@/state/SettingsContext';
+import { colors, font, spacing } from '@/theme/theme';
+import {
+  formatAccel,
+  formatDistance,
+  formatDuration,
+  formatMoney,
+  formatNumber,
+  formatTripDate,
+  speedUnitLabel,
+  toDisplaySpeed,
+} from '@/utils/format';
+import { regionForPoints } from '@/utils/geo';
+
+export default function TripDetailScreen() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { settings } = useSettings();
+
+  const [trip, setTrip] = useState<Trip | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const unit = settings.unit;
+  const unitLabel = speedUnitLabel(unit);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const t = id ? await getTrip(id).catch(() => null) : null;
+      if (alive) {
+        setTrip(t);
+        setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [id]);
+
+  const region = useMemo(() => {
+    if (!trip || trip.points.length === 0) return null;
+    return regionForPoints(trip.points.map((p) => ({ latitude: p.lat, longitude: p.lon })));
+  }, [trip]);
+
+  const confirmDelete = () => {
+    if (!trip) return;
+    Alert.alert('Eliminar viaje', 'Se borrará del historial. No se puede deshacer.', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Eliminar',
+        style: 'destructive',
+        onPress: async () => {
+          await deleteTrip(trip.id).catch(() => {});
+          router.back();
+        },
+      },
+    ]);
+  };
+
+  if (loading) {
+    return (
+      <View style={[styles.screen, styles.centered]}>
+        <ActivityIndicator color={colors.accent} />
+      </View>
+    );
+  }
+
+  if (!trip) {
+    return (
+      <View style={[styles.screen, styles.centered, { paddingTop: insets.top }]}>
+        <EmptyState
+          icon="alert-circle-outline"
+          title="Viaje no encontrado"
+          message="Puede que se haya eliminado del historial."
+        />
+      </View>
+    );
+  }
+
+  const first = trip.points[0];
+  const last = trip.points[trip.points.length - 1];
+  const lPer100 = trip.distanceM > 0 ? (trip.fuelL / (trip.distanceM / 1000)) * 100 : 0;
+  const stoppedMs = Math.max(0, trip.durationMs - trip.movingMs);
+
+  return (
+    <View style={styles.screen}>
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: insets.bottom + spacing.xxl }}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ------------------- mapa del recorrido ------------------- */}
+        <View style={styles.mapWrap}>
+          {region && (
+            <MapView
+              style={StyleSheet.absoluteFill}
+              initialRegion={region}
+              mapType={settings.mapStyle}
+              userInterfaceStyle="dark"
+              scrollEnabled={false}
+              zoomEnabled={false}
+              rotateEnabled={false}
+              pitchEnabled={false}
+            >
+              <SpeedTrace points={trip.points} width={5} />
+              {first && (
+                <Marker
+                  coordinate={{ latitude: first.lat, longitude: first.lon }}
+                  anchor={{ x: 0.5, y: 0.5 }}
+                  tracksViewChanges={false}
+                >
+                  <View style={[styles.marker, { backgroundColor: colors.lime }]} />
+                </Marker>
+              )}
+              {last && (
+                <Marker
+                  coordinate={{ latitude: last.lat, longitude: last.lon }}
+                  anchor={{ x: 0.5, y: 0.5 }}
+                  tracksViewChanges={false}
+                >
+                  <View style={[styles.marker, { backgroundColor: colors.danger }]} />
+                </Marker>
+              )}
+            </MapView>
+          )}
+
+          <Pressable
+            onPress={() => router.back()}
+            style={[styles.backButton, { top: insets.top + spacing.sm }]}
+            hitSlop={10}
+          >
+            <Ionicons name="chevron-back" size={22} color={colors.text} />
+          </Pressable>
+
+          <Pressable
+            onPress={confirmDelete}
+            style={[styles.deleteButton, { top: insets.top + spacing.sm }]}
+            hitSlop={10}
+          >
+            <Ionicons name="trash-outline" size={18} color={colors.danger} />
+          </Pressable>
+        </View>
+
+        <View style={styles.body}>
+          {/* ------------------- ruta ------------------- */}
+          <Text style={styles.date}>{formatTripDate(trip.startedAt)}</Text>
+          <View style={styles.routeBlock}>
+            <RoutePoint
+              tint={colors.lime}
+              label={trip.startLabel ?? 'Punto de partida'}
+              time={new Date(trip.startedAt).toLocaleTimeString('es', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+              })}
+            />
+            <View style={styles.routeLine} />
+            <RoutePoint
+              tint={colors.danger}
+              label={trip.endLabel ?? 'Punto de llegada'}
+              time={new Date(trip.endedAt).toLocaleTimeString('es', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+              })}
+            />
+          </View>
+
+          {/* ------------------- resumen ------------------- */}
+          <SectionTitle>Resumen</SectionTitle>
+          <StatGrid>
+            <StatTile
+              label="Distancia"
+              value={formatDistance(trip.distanceM, unit)}
+              icon="trail-sign-outline"
+              tint={colors.accent}
+            />
+            <StatTile
+              label="Duración"
+              value={formatDuration(trip.durationMs)}
+              icon="time-outline"
+            />
+            <StatTile
+              label="Velocidad máxima"
+              value={formatNumber(toDisplaySpeed(trip.maxSpeedKmh, unit))}
+              unit={unitLabel}
+              icon="flash-outline"
+              tint={colors.lime}
+            />
+            <StatTile
+              label="Media total"
+              value={formatNumber(toDisplaySpeed(trip.avgSpeedKmh, unit))}
+              unit={unitLabel}
+              icon="analytics-outline"
+            />
+            <StatTile
+              label="Media en marcha"
+              value={formatNumber(toDisplaySpeed(trip.avgMovingKmh, unit))}
+              unit={unitLabel}
+              icon="car-outline"
+            />
+            <StatTile
+              label="Detenido"
+              value={formatDuration(stoppedMs)}
+              icon="hourglass-outline"
+              tint={colors.textMuted}
+            />
+          </StatGrid>
+
+          {/* ------------------- velocidad ------------------- */}
+          <SectionTitle>Velocidad a lo largo del viaje</SectionTitle>
+          <GlassCard>
+            <SpeedChart points={trip.points} height={160} />
+          </GlassCard>
+
+          {/* ------------------- altimetría ------------------- */}
+          <SectionTitle
+            right={
+              <View style={styles.elevBadges}>
+                <Text style={[styles.elevBadge, { color: colors.ascent }]}>
+                  ↑ {Math.round(trip.elevGain)} m
+                </Text>
+                <Text style={[styles.elevBadge, { color: colors.descent }]}>
+                  ↓ {Math.round(trip.elevLoss)} m
+                </Text>
+              </View>
+            }
+          >
+            Perfil de elevación
+          </SectionTitle>
+          <GlassCard>
+            <ElevationChart points={trip.points} height={160} />
+            <View style={styles.elevSummary}>
+              <ElevStat label="Mínima" value={trip.minAlt != null ? `${Math.round(trip.minAlt)} m` : '—'} />
+              <ElevStat label="Máxima" value={trip.maxAlt != null ? `${Math.round(trip.maxAlt)} m` : '—'} />
+              <ElevStat
+                label="Desnivel neto"
+                value={`${trip.elevGain - trip.elevLoss >= 0 ? '+' : ''}${Math.round(
+                  trip.elevGain - trip.elevLoss
+                )} m`}
+              />
+            </View>
+          </GlassCard>
+
+          {/* ------------------- prestaciones ------------------- */}
+          {(trip.perf.t0_100 != null ||
+            trip.perf.t0_60 != null ||
+            trip.perf.t100_0 != null ||
+            trip.perf.t402m != null) && (
+            <>
+              <SectionTitle right={<Badge label="MEDIDO POR GPS" tint={colors.lime} />}>
+                Prestaciones del viaje
+              </SectionTitle>
+              <StatGrid>
+                <StatTile
+                  label="0 → 100 km/h"
+                  value={formatAccel(trip.perf.t0_100)}
+                  icon="rocket-outline"
+                  tint={colors.lime}
+                  compact
+                />
+                <StatTile
+                  label="0 → 60 km/h"
+                  value={formatAccel(trip.perf.t0_60)}
+                  icon="rocket-outline"
+                  compact
+                />
+                <StatTile
+                  label="100 → 0"
+                  value={formatAccel(trip.perf.t100_0)}
+                  icon="stop-circle-outline"
+                  compact
+                />
+                <StatTile
+                  label="402 m"
+                  value={formatAccel(trip.perf.t402m)}
+                  icon="flag-outline"
+                  compact
+                />
+              </StatGrid>
+            </>
+          )}
+
+          {/* ------------------- combustible ------------------- */}
+          <SectionTitle>Combustible estimado</SectionTitle>
+          <GlassCard padded={false}>
+            <FuelRow label="Consumo del viaje" value={`${trip.fuelL.toFixed(2)} L`} />
+            <Divider />
+            <FuelRow label="Promedio" value={`${lPer100.toFixed(1)} L/100 km`} />
+            <Divider />
+            <FuelRow
+              label="Costo aproximado"
+              value={formatMoney(trip.cost, settings.currency)}
+              tint={colors.amber}
+            />
+            <Divider />
+            <FuelRow
+              label="Rendimiento"
+              value={lPer100 > 0 ? `${(100 / lPer100).toFixed(1)} km/L` : '—'}
+            />
+          </GlassCard>
+          <Text style={styles.footnote}>
+            Estimación calculada a partir del consumo declarado del {settings.vehicle.model}, la
+            velocidad media y las aceleraciones registradas. No sustituye al computador de a bordo.
+          </Text>
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
+function RoutePoint({ tint, label, time }: { tint: string; label: string; time: string }) {
+  return (
+    <View style={styles.routePoint}>
+      <View style={[styles.routeDot, { backgroundColor: tint }]} />
+      <Text style={styles.routeLabel} numberOfLines={1}>
+        {label}
+      </Text>
+      <Text style={styles.routeTime}>{time}</Text>
+    </View>
+  );
+}
+
+function ElevStat({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={{ flex: 1 }}>
+      <Text style={styles.elevStatLabel}>{label.toUpperCase()}</Text>
+      <Text style={styles.elevStatValue}>{value}</Text>
+    </View>
+  );
+}
+
+function FuelRow({ label, value, tint = colors.text }: { label: string; value: string; tint?: string }) {
+  return (
+    <View style={styles.fuelRow}>
+      <Text style={styles.fuelLabel}>{label}</Text>
+      <Text style={[styles.fuelValue, { color: tint }]}>{value}</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: colors.bg },
+  centered: { alignItems: 'center', justifyContent: 'center' },
+
+  mapWrap: { height: 300, backgroundColor: colors.bgElevated },
+  marker: { width: 14, height: 14, borderRadius: 7, borderWidth: 2.5, borderColor: colors.bg },
+  backButton: {
+    position: 'absolute',
+    left: spacing.lg,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(5,7,11,0.7)',
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteButton: {
+    position: 'absolute',
+    right: spacing.lg,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(5,7,11,0.7)',
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  body: { paddingHorizontal: spacing.lg, paddingTop: spacing.lg },
+  date: { fontSize: 12, color: colors.textFaint, fontWeight: '700', letterSpacing: 0.5 },
+
+  routeBlock: { marginTop: spacing.md, marginBottom: spacing.sm },
+  routePoint: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  routeDot: { width: 10, height: 10, borderRadius: 5 },
+  routeLabel: { flex: 1, ...font.body, color: colors.text },
+  routeTime: { fontSize: 13, color: colors.textFaint, fontVariant: ['tabular-nums'] },
+  routeLine: {
+    width: 1.5,
+    height: 20,
+    backgroundColor: colors.borderStrong,
+    marginLeft: 4.5,
+    marginVertical: 3,
+  },
+
+  elevBadges: { flexDirection: 'row', gap: spacing.md },
+  elevBadge: { fontSize: 12, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  elevSummary: { flexDirection: 'row', marginTop: spacing.md, gap: spacing.sm },
+  elevStatLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 0.7, color: colors.textFaint },
+  elevStatValue: {
+    fontSize: 16,
+    color: colors.text,
+    fontWeight: '600',
+    marginTop: 3,
+    fontVariant: ['tabular-nums'],
+  },
+
+  fuelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 13,
+    paddingHorizontal: spacing.lg,
+  },
+  fuelLabel: { fontSize: 14, color: colors.textMuted, fontWeight: '600' },
+  fuelValue: { fontSize: 15, fontWeight: '700', fontVariant: ['tabular-nums'] },
+
+  footnote: {
+    fontSize: 11,
+    color: colors.textFaint,
+    lineHeight: 16,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.xs,
+  },
+});

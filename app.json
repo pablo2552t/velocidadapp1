@@ -1,0 +1,63 @@
+{
+  "expo": {
+    "name": "Velocidad",
+    "slug": "velocidadapp",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "velocidad",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#05070B",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.pablo.velocidadapp",
+      "buildNumber": "1",
+      "requireFullScreen": true,
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "location"
+        ],
+        "NSLocationWhenInUseUsageDescription": "Velocidad usa el GPS para medir tu velocidad, altitud y trazar el recorrido de tus viajes en tiempo real.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Permite que Velocidad siga registrando el viaje aunque la pantalla esté apagada o uses otra app.",
+        "NSMotionUsageDescription": "Se usa para mejorar la precisión de la velocidad y detectar cuándo el carro está detenido.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.pablo.velocidadapp",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Velocidad usa el GPS para medir tu velocidad, altitud y trazar el recorrido de tus viajes en tiempo real.",
+          "locationAlwaysAndWhenInUsePermission": "Permite que Velocidad siga registrando el viaje aunque la pantalla esté apagada o uses otra app.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#05070B",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 180,
+          "resizeMode": "contain"
+        }
+      ],
+      "expo-font"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
