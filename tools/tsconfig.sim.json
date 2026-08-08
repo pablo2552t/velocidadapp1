@@ -13,8 +13,10 @@
   },
   "include": [
     "../src/services/tripEngine.ts",
+    "../src/services/speedStats.ts",
     "../src/utils/geo.ts",
     "../src/utils/format.ts",
+    "../src/utils/altitude.ts",
     "../src/vehicles/polo.ts"
   ]
 }

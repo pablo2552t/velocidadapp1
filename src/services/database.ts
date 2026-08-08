@@ -1,5 +1,9 @@
 import * as SQLite from 'expo-sqlite';
+import { SpeedAnalysis } from './speedStats';
 import { PerfResults, TrackPoint } from './tripEngine';
+
+/** Versión del esquema. Al subirla hay que añadir su bloque en `migrate`. */
+const SCHEMA_VERSION = 2;
 
 export type TripSummary = {
   id: string;
@@ -21,6 +25,8 @@ export type TripSummary = {
   cost: number;
   perf: PerfResults;
   note: string | null;
+  /** Análisis de velocidad; `null` en viajes grabados antes de que existiera. */
+  analysis: SpeedAnalysis | null;
 };
 
 export type Trip = TripSummary & { points: TrackPoint[] };
@@ -57,10 +63,34 @@ async function getDb(): Promise<SQLite.SQLiteDatabase> {
         );
         CREATE INDEX IF NOT EXISTS idx_trips_started ON trips (started_at DESC);
       `);
+      await migrate(db);
       return db;
     })();
   }
   return dbPromise;
+}
+
+/**
+ * Migraciones incrementales.
+ *
+ * `user_version` es un entero que SQLite guarda dentro del propio archivo, así
+ * que sobrevive a las actualizaciones de la app y sirve para saber qué cambios
+ * ya se aplicaron. Los viajes viejos se conservan: las columnas nuevas quedan
+ * en NULL y la interfaz los reconstruye a partir de la traza.
+ */
+async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
+  const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+  const current = row?.user_version ?? 0;
+  if (current >= SCHEMA_VERSION) return;
+
+  if (current < 2) {
+    const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(trips)');
+    if (!columns.some((c) => c.name === 'analysis')) {
+      await db.execAsync('ALTER TABLE trips ADD COLUMN analysis TEXT');
+    }
+  }
+
+  await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 }
 
 type Row = {
@@ -83,6 +113,7 @@ type Row = {
   cost: number;
   perf: string | null;
   note: string | null;
+  analysis?: string | null;
   points?: string;
 };
 
@@ -91,8 +122,11 @@ const EMPTY_PERF: PerfResults = {
   t0_100: null,
   t60_100: null,
   t100_0: null,
+  t201m: null,
   t402m: null,
   vTrap: null,
+  roll60_100: null,
+  roll80_120: null,
 };
 
 function rowToSummary(r: Row): TripSummary {
@@ -102,6 +136,14 @@ function rowToSummary(r: Row): TripSummary {
       perf = { ...EMPTY_PERF, ...JSON.parse(r.perf) };
     } catch {
       // Fila corrupta: seguimos con los valores vacíos en lugar de romper la lista.
+    }
+  }
+  let analysis: SpeedAnalysis | null = null;
+  if (r.analysis) {
+    try {
+      analysis = JSON.parse(r.analysis) as SpeedAnalysis;
+    } catch {
+      analysis = null;
     }
   }
   return {
@@ -124,6 +166,7 @@ function rowToSummary(r: Row): TripSummary {
     cost: r.cost,
     perf,
     note: r.note,
+    analysis,
   };
 }
 
@@ -133,8 +176,8 @@ export async function saveTrip(trip: Trip): Promise<void> {
     `INSERT OR REPLACE INTO trips (
        id, started_at, ended_at, distance_m, duration_ms, moving_ms,
        max_speed, avg_speed, avg_moving, elev_gain, elev_loss, max_alt, min_alt,
-       start_label, end_label, fuel_l, cost, perf, note, points
-     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       start_label, end_label, fuel_l, cost, perf, note, analysis, points
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       trip.id,
       trip.startedAt,
@@ -155,6 +198,7 @@ export async function saveTrip(trip: Trip): Promise<void> {
       trip.cost,
       JSON.stringify(trip.perf),
       trip.note,
+      trip.analysis ? JSON.stringify(trip.analysis) : null,
       JSON.stringify(trip.points),
     ]
   );
@@ -166,7 +210,7 @@ export async function listTrips(limit = 200): Promise<TripSummary[]> {
   const rows = await db.getAllAsync<Row>(
     `SELECT id, started_at, ended_at, distance_m, duration_ms, moving_ms,
             max_speed, avg_speed, avg_moving, elev_gain, elev_loss, max_alt, min_alt,
-            start_label, end_label, fuel_l, cost, perf, note
+            start_label, end_label, fuel_l, cost, perf, note, analysis
      FROM trips ORDER BY started_at DESC LIMIT ?`,
     [limit]
   );
@@ -215,6 +259,11 @@ export type Totals = {
   best0_100: number | null;
   best100_0: number | null;
   best402m: number | null;
+  bestRoll60_100: number | null;
+  bestRoll80_120: number | null;
+  /** Máxima sostenida más alta del historial: el récord honesto. */
+  bestSustainedKmh: number;
+  overLimitMs: number;
 };
 
 /** Agregados de todo el historial, calculados en SQL para no cargar los viajes. */
@@ -238,25 +287,44 @@ export async function getTotals(): Promise<Totals> {
      FROM trips`
   );
 
-  // Los récords viven dentro del JSON de `perf`; se resuelven en JS.
-  const perfRows = await db.getAllAsync<{ perf: string | null }>(
-    'SELECT perf FROM trips WHERE perf IS NOT NULL'
+  // Los récords viven dentro de los JSON de `perf` y `analysis`; se resuelven en JS.
+  const detailRows = await db.getAllAsync<{ perf: string | null; analysis: string | null }>(
+    'SELECT perf, analysis FROM trips'
   );
   let best0_60: number | null = null;
   let best0_100: number | null = null;
   let best100_0: number | null = null;
   let best402m: number | null = null;
-  for (const p of perfRows) {
-    try {
-      const perf = JSON.parse(p.perf ?? '{}') as PerfResults;
-      const min = (a: number | null, b: number | null | undefined) =>
-        b == null ? a : a == null ? b : Math.min(a, b);
-      best0_60 = min(best0_60, perf.t0_60);
-      best0_100 = min(best0_100, perf.t0_100);
-      best100_0 = min(best100_0, perf.t100_0);
-      best402m = min(best402m, perf.t402m);
-    } catch {
-      // Ignora filas ilegibles.
+  let bestRoll60_100: number | null = null;
+  let bestRoll80_120: number | null = null;
+  let bestSustainedKmh = 0;
+  let overLimitMs = 0;
+
+  const min = (a: number | null, b: number | null | undefined) =>
+    b == null ? a : a == null ? b : Math.min(a, b);
+
+  for (const rowDetail of detailRows) {
+    if (rowDetail.perf) {
+      try {
+        const perf = JSON.parse(rowDetail.perf) as PerfResults;
+        best0_60 = min(best0_60, perf.t0_60);
+        best0_100 = min(best0_100, perf.t0_100);
+        best100_0 = min(best100_0, perf.t100_0);
+        best402m = min(best402m, perf.t402m);
+        bestRoll60_100 = min(bestRoll60_100, perf.roll60_100);
+        bestRoll80_120 = min(bestRoll80_120, perf.roll80_120);
+      } catch {
+        // Ignora filas ilegibles.
+      }
+    }
+    if (rowDetail.analysis) {
+      try {
+        const analysis = JSON.parse(rowDetail.analysis) as SpeedAnalysis;
+        bestSustainedKmh = Math.max(bestSustainedKmh, analysis.sustainedMaxKmh ?? 0);
+        overLimitMs += analysis.overLimitMs ?? 0;
+      } catch {
+        // Ignora filas ilegibles.
+      }
     }
   }
 
@@ -274,6 +342,10 @@ export async function getTotals(): Promise<Totals> {
     best0_100,
     best100_0,
     best402m,
+    bestRoll60_100,
+    bestRoll80_120,
+    bestSustainedKmh,
+    overLimitMs,
   };
 }
 

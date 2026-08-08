@@ -7,6 +7,7 @@ import {
 } from '@/utils/geo';
 import { MS_TO_KMH } from '@/utils/format';
 import { Vehicle, fuelForSegment } from '@/vehicles/polo';
+import { EMPTY_ANALYSIS, SpeedAnalysis, SpeedAnalyzer } from './speedStats';
 
 /** Punto almacenado de la traza. Nombres cortos: se serializa a JSON en la BD. */
 export type TrackPoint = {
@@ -32,10 +33,14 @@ export type RawFix = {
 export type PerfResults = {
   t0_60: number | null; // 0-60 km/h, s
   t0_100: number | null; // 0-100 km/h, s
-  t60_100: number | null;
+  t60_100: number | null; // parcial 60→100 dentro de una arrancada
   t100_0: number | null; // frenada, s
+  t201m: number | null; // 1/8 de milla, s
   t402m: number | null; // 1/4 de milla, s
   vTrap: number | null; // velocidad al cruzar los 402 m, km/h
+  /** Recuperaciones en marcha: sin salir de parado, como las mide una Dragy. */
+  roll60_100: number | null;
+  roll80_120: number | null;
 };
 
 const EMPTY_PERF: PerfResults = {
@@ -43,9 +48,53 @@ const EMPTY_PERF: PerfResults = {
   t0_100: null,
   t60_100: null,
   t100_0: null,
+  t201m: null,
   t402m: null,
   vTrap: null,
+  roll60_100: null,
+  roll80_120: null,
 };
+
+/**
+ * Recuperación en marcha: vas circulando a `fromKmh`, pisas a fondo y se mide
+ * lo que tardas en llegar a `toKmh`.
+ *
+ * Importa más que el 0-100 en el uso real: casi nunca arrancas a fondo desde
+ * parado, pero adelantar en carretera es exactamente esto. Y en un motor
+ * atmosférico en altura es donde más se nota la falta de aire.
+ */
+class RollDetector {
+  best: number | null = null;
+  private startT: number | null = null;
+
+  constructor(
+    private readonly fromKmh: number,
+    private readonly toKmh: number
+  ) {}
+
+  push(prevT: number, prevKmh: number, tMs: number, kmh: number): void {
+    if (this.startT == null) {
+      if (prevKmh < this.fromKmh && kmh >= this.fromKmh) {
+        this.startT = interpTime(prevT, prevKmh, tMs, kmh, this.fromKmh);
+      }
+      return;
+    }
+    // Levantó el pie o frenó: la medición deja de ser una tirada limpia.
+    if (kmh < this.fromKmh - 3) {
+      this.startT = null;
+      return;
+    }
+    if (prevKmh < this.toKmh && kmh >= this.toKmh) {
+      const seconds = (interpTime(prevT, prevKmh, tMs, kmh, this.toKmh) - this.startT) / 1000;
+      if (this.best == null || seconds < this.best) this.best = seconds;
+      this.startT = null;
+    }
+  }
+
+  reset(): void {
+    this.startT = null;
+  }
+}
 
 /** Umbral por debajo del cual consideramos el carro detenido (m/s ≈ 1,8 km/h). */
 const STOPPED_MS = 0.5;
@@ -72,6 +121,9 @@ export class PerformanceTimer {
   private brakeStartT: number | null = null;
   private brakeMinV = Infinity;
 
+  private roll60_100 = new RollDetector(60, 100);
+  private roll80_120 = new RollDetector(80, 120);
+
   /** Última tanda cerrada, para mostrarla en el HUD justo después de la pasada. */
   lastRun: PerfResults | null = null;
 
@@ -86,6 +138,15 @@ export class PerformanceTimer {
       this.abortRun();
       return;
     }
+
+    // Las recuperaciones en marcha son independientes de las arrancadas: van
+    // corriendo todo el tiempo, se pise o no desde parado.
+    const prevKmh = prev.v * MS_TO_KMH;
+    const kmh = vMs * MS_TO_KMH;
+    this.roll60_100.push(prev.t, prevKmh, tMs, kmh);
+    this.roll80_120.push(prev.t, prevKmh, tMs, kmh);
+    this.best.roll60_100 = this.roll60_100.best;
+    this.best.roll80_120 = this.roll80_120.best;
 
     // ---- Resolución del instante de salida ----
     //
@@ -142,13 +203,26 @@ export class PerformanceTimer {
         if (this.run.t0_60 != null) this.run.t60_100 = c100 - this.run.t0_60;
       }
 
-      // 402 m (1/4 de milla) desde el lanzamiento.
+      // Marcas de distancia desde el lanzamiento: 201 m (1/8 de milla) y
+      // 402 m (1/4 de milla).
       const traveled = distM - this.launchDist;
       const prevTraveled = prev.d - this.launchDist;
-      if (this.run.t402m == null && prevTraveled < 402 && traveled >= 402) {
-        const frac = (402 - prevTraveled) / (traveled - prevTraveled);
-        this.run.t402m = (prev.t + (tMs - prev.t) * frac - this.launchT) / 1000;
-        this.run.vTrap = (prev.v + (vMs - prev.v) * frac) * MS_TO_KMH;
+      const crossDistance = (meters: number) => {
+        if (prevTraveled >= meters || traveled < meters) return null;
+        const frac = (meters - prevTraveled) / (traveled - prevTraveled);
+        return {
+          seconds: (prev.t + (tMs - prev.t) * frac - this.launchT!) / 1000,
+          kmh: (prev.v + (vMs - prev.v) * frac) * MS_TO_KMH,
+        };
+      };
+
+      const eighth = crossDistance(201);
+      if (eighth && this.run.t201m == null) this.run.t201m = eighth.seconds;
+
+      const quarter = crossDistance(402);
+      if (quarter && this.run.t402m == null) {
+        this.run.t402m = quarter.seconds;
+        this.run.vTrap = quarter.kmh;
       }
 
       this.commitBest();
@@ -181,7 +255,7 @@ export class PerformanceTimer {
   }
 
   private commitBest(): void {
-    const keys: (keyof PerfResults)[] = ['t0_60', 't0_100', 't60_100', 't402m'];
+    const keys: (keyof PerfResults)[] = ['t0_60', 't0_100', 't60_100', 't201m', 't402m'];
     for (const k of keys) {
       const v = this.run[k];
       if (v == null) continue;
@@ -194,7 +268,7 @@ export class PerformanceTimer {
   }
 
   private closeRun(): void {
-    if (this.run.t0_60 != null || this.run.t0_100 != null || this.run.t402m != null) {
+    if (this.run.t0_60 != null || this.run.t0_100 != null || this.run.t201m != null) {
       this.lastRun = { ...this.run };
     }
     this.launchT = null;
@@ -208,6 +282,8 @@ export class PerformanceTimer {
     this.run = { ...EMPTY_PERF };
     this.brakeStartT = null;
     this.brakeMinV = Infinity;
+    this.roll60_100.reset();
+    this.roll80_120.reset();
   }
 }
 
@@ -239,6 +315,7 @@ export type LiveStats = {
   perf: PerfResults;
   lastRun: PerfResults | null;
   pointCount: number;
+  analysis: SpeedAnalysis;
 };
 
 export const EMPTY_STATS: LiveStats = {
@@ -263,6 +340,7 @@ export const EMPTY_STATS: LiveStats = {
   perf: { ...EMPTY_PERF },
   lastRun: null,
   pointCount: 0,
+  analysis: EMPTY_ANALYSIS,
 };
 
 /**
@@ -288,6 +366,7 @@ export class TripEngine {
   private elev = new ElevationAccumulator(2.5);
   private grade = new GradeTracker(120);
   private perfTimer = new PerformanceTimer();
+  private analyzer = new SpeedAnalyzer();
 
   private last: TrackPoint | null = null;
   private lastRaw: RawFix | null = null;
@@ -298,6 +377,11 @@ export class TripEngine {
 
   constructor(private vehicle: Vehicle, startedAt = Date.now()) {
     this.startedAt = startedAt;
+  }
+
+  /** Límite de velocidad vigente, para contabilizar el tiempo por encima. */
+  set speedLimitKmh(limit: number) {
+    this.analyzer.limitKmh = limit;
   }
 
   /**
@@ -372,6 +456,7 @@ export class TripEngine {
     this.grade.push(stepDist, alt);
 
     this.perfTimer.push(fix.timestamp, speed, this.distance);
+    this.analyzer.push(fix.timestamp, speed * MS_TO_KMH, dtMs, alt);
 
     const point: TrackPoint = {
       t: fix.timestamp,
@@ -413,6 +498,7 @@ export class TripEngine {
       perf: { ...this.perfTimer.best },
       lastRun: this.perfTimer.lastRun,
       pointCount: this.points.length,
+      analysis: this.analyzer.result(),
     };
   }
 

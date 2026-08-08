@@ -11,7 +11,7 @@ import Svg, {
   Text as SvgText,
 } from 'react-native-svg';
 
-import { colors, mono } from '@/theme/theme';
+import { colors, mono, speedColor } from '@/theme/theme';
 import { TrackPoint } from '@/services/tripEngine';
 import { MS_TO_KMH } from '@/utils/format';
 
@@ -278,6 +278,131 @@ export function DailyBars({
       <Text style={styles.barCaption}>
         máx {maxKm.toFixed(1)} {unitLabel}/día
       </Text>
+    </View>
+  );
+}
+
+/**
+ * Reparto del tiempo por rango de velocidad.
+ *
+ * Responde a "¿a qué velocidad pasé el viaje de verdad?", que ni la media ni la
+ * máxima contestan: la media la hunden los semáforos y la máxima es un instante.
+ * La línea marca el percentil 85, el criterio con el que los ingenieros de
+ * tránsito fijan los límites de velocidad.
+ */
+export function SpeedHistogram({
+  histogram,
+  binKmh,
+  p85,
+  height = 150,
+}: {
+  histogram: number[];
+  binKmh: number;
+  p85?: number | null;
+  height?: number;
+}) {
+  const { width, onLayout } = useMeasuredWidth();
+
+  const geometry = useMemo(() => {
+    const total = histogram.reduce((sum, ms) => sum + ms, 0);
+    if (total <= 0) return null;
+
+    // Recorta las casillas altas vacías: en ciudad sobra media escala.
+    let ultima = histogram.length - 1;
+    while (ultima > 3 && histogram[ultima] === 0) ultima--;
+    const bins = histogram.slice(0, ultima + 1);
+    const pico = Math.max(...bins);
+
+    const plotW = width - PAD_LEFT - 8;
+    const plotH = height - PAD_TOP - PAD_BOTTOM;
+    const paso = plotW / bins.length;
+
+    return { bins, pico, total, plotW, plotH, paso };
+  }, [histogram, width, height]);
+
+  if (!geometry) {
+    return (
+      <View onLayout={onLayout} style={{ height }}>
+        <ChartPlaceholder message="Sin datos de velocidad" />
+      </View>
+    );
+  }
+
+  const { bins, pico, total, plotH, paso } = geometry;
+  const xP85 = p85 != null && p85 > 0 ? PAD_LEFT + (p85 / binKmh) * paso : null;
+
+  return (
+    <View onLayout={onLayout} style={{ height }}>
+      <Svg width={width} height={height}>
+        <Line
+          x1={PAD_LEFT}
+          x2={width - 8}
+          y1={PAD_TOP + plotH}
+          y2={PAD_TOP + plotH}
+          stroke={colors.border}
+          strokeWidth={1}
+        />
+
+        {bins.map((ms, i) => {
+          const alto = pico > 0 ? (ms / pico) * plotH : 0;
+          const centro = (i + 0.5) * binKmh;
+          return (
+            <G key={i}>
+              <Rect
+                x={PAD_LEFT + i * paso + paso * 0.12}
+                y={PAD_TOP + plotH - alto}
+                width={paso * 0.76}
+                height={Math.max(alto, ms > 0 ? 1.5 : 0)}
+                rx={Math.min(2, paso / 4)}
+                fill={speedColor(centro)}
+                opacity={0.9}
+              />
+              {i % 3 === 0 && (
+                <SvgText
+                  x={PAD_LEFT + i * paso + paso / 2}
+                  y={height - 6}
+                  fill={colors.textFaint}
+                  fontSize={9}
+                  textAnchor="middle"
+                >
+                  {i * binKmh}
+                </SvgText>
+              )}
+            </G>
+          );
+        })}
+
+        {xP85 != null && xP85 < width - 8 && (
+          <G>
+            <Line
+              x1={xP85}
+              x2={xP85}
+              y1={PAD_TOP - 4}
+              y2={PAD_TOP + plotH}
+              stroke={colors.text}
+              strokeOpacity={0.75}
+              strokeWidth={1.5}
+              strokeDasharray="3 3"
+            />
+            <SvgText
+              x={Math.min(xP85 + 4, width - 30)}
+              y={PAD_TOP + 4}
+              fill={colors.text}
+              fontSize={9}
+              fontWeight="700"
+            >
+              P85
+            </SvgText>
+          </G>
+        )}
+
+        <SvgText x={2} y={PAD_TOP + 4} fill={colors.textFaint} fontSize={9}>
+          {Math.round((pico / total) * 100)}%
+        </SvgText>
+        <SvgText x={2} y={height - 6} fill={colors.textFaint} fontSize={9}>
+          km/h
+        </SvgText>
+      </Svg>
     </View>
   );
 }

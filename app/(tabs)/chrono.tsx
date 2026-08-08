@@ -16,6 +16,7 @@ import { useChronometer } from '@/hooks/useChronometer';
 import { useSettings } from '@/state/SettingsContext';
 import { useTracking } from '@/state/TrackingContext';
 import { colors, font, mono, radius, spacing } from '@/theme/theme';
+import { altitudeEffect, compare0100 } from '@/utils/altitude';
 import {
   formatAccel,
   formatDistance,
@@ -40,11 +41,17 @@ export default function ChronoScreen() {
   const best = live.perf;
   const lastRun = live.lastRun;
 
-  // Comparación con la cifra de fábrica: el signo importa más que el valor.
-  const delta = useMemo(() => {
-    if (best.t0_100 == null) return null;
-    return best.t0_100 - vehicle.accel0100Factory;
-  }, [best.t0_100, vehicle.accel0100Factory]);
+  // El dato de fábrica está medido al nivel del mar. Compararse contra él en
+  // altura solo produce frustración, así que el objetivo se corrige primero.
+  const effect = useMemo(() => {
+    if (live.altitude == null) return null;
+    return altitudeEffect(vehicle, Math.round(live.altitude / 50) * 50);
+  }, [vehicle, live.altitude]);
+
+  const verdict = useMemo(
+    () => (effect ? compare0100(best.t0_100, effect) : null),
+    [effect, best.t0_100]
+  );
 
   const armed = live.speedKmh < 2;
 
@@ -128,7 +135,7 @@ export default function ChronoScreen() {
         </View>
       </GlassCard>
 
-      <SectionTitle>Mejores marcas de la sesión</SectionTitle>
+      <SectionTitle>Desde parado</SectionTitle>
       <StatGrid>
         <StatTile
           label="0 → 100 km/h"
@@ -142,17 +149,13 @@ export default function ChronoScreen() {
           icon="rocket-outline"
         />
         <StatTile
-          label="60 → 100 km/h"
-          value={formatAccel(best.t60_100)}
-          icon="trending-up-outline"
-        />
-        <StatTile
           label="100 → 0 frenada"
           value={formatAccel(best.t100_0)}
           icon="stop-circle-outline"
           tint={best.t100_0 != null ? colors.danger : colors.textFaint}
         />
-        <StatTile label="402 m" value={formatAccel(best.t402m)} icon="flag-outline" />
+        <StatTile label="201 m (⅛ milla)" value={formatAccel(best.t201m)} icon="flag-outline" />
+        <StatTile label="402 m (¼ milla)" value={formatAccel(best.t402m)} icon="flag-outline" />
         <StatTile
           label="Vel. en meta"
           value={
@@ -164,22 +167,86 @@ export default function ChronoScreen() {
         />
       </StatGrid>
 
-      {delta != null && (
+      <SectionTitle right={<Badge label="SIN DETENERTE" tint={colors.accent} />}>
+        Recuperaciones en marcha
+      </SectionTitle>
+      <StatGrid>
+        <StatTile
+          label="60 → 100 km/h"
+          value={formatAccel(best.roll60_100)}
+          icon="trending-up-outline"
+          tint={best.roll60_100 != null ? colors.accent : colors.textFaint}
+        />
+        <StatTile
+          label="80 → 120 km/h"
+          value={formatAccel(best.roll80_120)}
+          icon="trending-up-outline"
+          tint={best.roll80_120 != null ? colors.accent : colors.textFaint}
+        />
+        <StatTile
+          label="60 → 100 en arrancada"
+          value={formatAccel(best.t60_100)}
+          icon="rocket-outline"
+          compact
+        />
+      </StatGrid>
+      <Text style={styles.footnote}>
+        Vas circulando, pisas a fondo y el crono corre solo. Es la medida que describe cómo
+        adelanta el carro de verdad: casi nunca sales a fondo desde parado, pero sí rebasas en
+        carretera.
+      </Text>
+
+      {effect && (
+        <>
+          <SectionTitle right={<Badge label="SAE J1349" tint={colors.amber} />}>
+            Objetivo a tu altitud
+          </SectionTitle>
+          <GlassCard>
+            <View style={styles.targetRow}>
+              <View>
+                <Text style={styles.targetLabel}>0-100 ESPERADO AQUÍ</Text>
+                <Text style={styles.targetValue}>
+                  {effect.target0100Min.toFixed(1).replace('.', ',')} –{' '}
+                  {effect.target0100Max.toFixed(1).replace('.', ',')}
+                  <Text style={styles.targetUnit}> s</Text>
+                </Text>
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={styles.targetPower}>{Math.round(effect.powerCv)} CV</Text>
+                <Text style={styles.targetHint}>
+                  a {Math.round(effect.altitudeM)} m · −{effect.lossPct.toFixed(0)} %
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.targetNote}>
+              Fábrica declara {vehicle.accel0100Factory.toFixed(1).replace('.', ',')} s, pero medido
+              al nivel del mar. Tu motor es atmosférico y aquí dispone de{' '}
+              {Math.round(effect.powerCv)} de sus {vehicle.powerCv} CV, así que este es el rango
+              contra el que tiene sentido compararte.
+            </Text>
+          </GlassCard>
+        </>
+      )}
+
+      {verdict && (
         <View
           style={[
             styles.deltaCard,
-            { borderColor: delta <= 0 ? `${colors.lime}55` : `${colors.amber}55` },
+            { borderColor: verdict.verdict !== 'peor' ? `${colors.lime}55` : `${colors.amber}55` },
           ]}
         >
           <Ionicons
-            name={delta <= 0 ? 'trophy' : 'information-circle'}
+            name={verdict.verdict !== 'peor' ? 'trophy' : 'information-circle'}
             size={18}
-            color={delta <= 0 ? colors.lime : colors.amber}
+            color={verdict.verdict !== 'peor' ? colors.lime : colors.amber}
           />
           <Text style={styles.deltaText}>
-            {delta <= 0
-              ? `${Math.abs(delta).toFixed(2).replace('.', ',')} s por debajo del dato de fábrica (${vehicle.accel0100Factory.toFixed(1).replace('.', ',')} s).`
-              : `${delta.toFixed(2).replace('.', ',')} s por encima del dato de fábrica (${vehicle.accel0100Factory.toFixed(1).replace('.', ',')} s). Influyen la carga, la altitud y la pendiente.`}
+            {verdict.verdict === 'mejor' &&
+              `Tu ${formatAccel(best.t0_100)} está ${verdict.deltaSeconds.toFixed(2).replace('.', ',')} s por debajo del rango esperado a esta altitud.`}
+            {verdict.verdict === 'dentro' &&
+              `Tu ${formatAccel(best.t0_100)} cae justo en lo que cabe esperar del carro aquí arriba.`}
+            {verdict.verdict === 'peor' &&
+              `Tu ${formatAccel(best.t0_100)} está ${verdict.deltaSeconds.toFixed(2).replace('.', ',')} s por encima del rango esperado. Suele ser el peso a bordo, la pendiente del tramo o una salida poco limpia.`}
           </Text>
         </View>
       )}
@@ -191,6 +258,8 @@ export default function ChronoScreen() {
             <PassRow label="0 → 60 km/h" value={formatAccel(lastRun.t0_60)} />
             <Divider />
             <PassRow label="0 → 100 km/h" value={formatAccel(lastRun.t0_100)} />
+            <Divider />
+            <PassRow label="201 m" value={formatAccel(lastRun.t201m)} />
             <Divider />
             <PassRow label="402 m" value={formatAccel(lastRun.t402m)} />
           </GlassCard>
@@ -284,6 +353,25 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   dragLiveUnit: { fontSize: 14, color: colors.textMuted, fontWeight: '700' },
+
+  targetRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  targetLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 0.8, color: colors.textFaint },
+  targetValue: {
+    fontSize: 30,
+    fontWeight: '300',
+    color: colors.text,
+    marginTop: 3,
+    fontVariant: ['tabular-nums'],
+  },
+  targetUnit: { fontSize: 14, color: colors.textMuted, fontWeight: '700' },
+  targetPower: { fontSize: 20, fontWeight: '700', color: colors.amber, fontVariant: ['tabular-nums'] },
+  targetHint: { fontSize: 10, color: colors.textFaint, fontFamily: mono, marginTop: 3 },
+  targetNote: { fontSize: 12, color: colors.textMuted, lineHeight: 18, marginTop: spacing.md },
 
   deltaCard: {
     flexDirection: 'row',

@@ -86,6 +86,11 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
   const settingsRef = useRef(settings);
   useEffect(() => {
     settingsRef.current = settings;
+    // El límite alimenta el contador de tiempo en exceso; si lo cambias a
+    // media grabación, el viaje en curso lo adopta al vuelo.
+    const limit = settings.speedAlertEnabled ? settings.speedLimit : 0;
+    ambientRef.current.speedLimitKmh = limit;
+    if (tripRef.current) tripRef.current.speedLimitKmh = limit;
   }, [settings]);
 
   const setStatusBoth = useCallback((next: TrackingStatus) => {
@@ -289,6 +294,9 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
     }
 
     const engine = new TripEngine(settingsRef.current.vehicle);
+    engine.speedLimitKmh = settingsRef.current.speedAlertEnabled
+      ? settingsRef.current.speedLimit
+      : 0;
     tripRef.current = engine;
     pathBufferRef.current = [];
     pathTickRef.current = 0;
@@ -405,6 +413,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
         cost,
         perf: stats.perf,
         note: null,
+        analysis: stats.analysis,
         points: simplified,
       });
 

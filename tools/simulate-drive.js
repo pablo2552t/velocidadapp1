@@ -24,6 +24,8 @@ Module._resolveFilename = function (request, ...args) {
 const { TripEngine } = require(path.join(BUILD, 'services/tripEngine.js'));
 const { POLO_TRACK_2026, estimateGearAndRpm, kmhPer1000Rpm } = require(path.join(BUILD, 'vehicles/polo.js'));
 const { simplify } = require(path.join(BUILD, 'utils/geo.js'));
+const { altitudeEffect, sae1349Factor, standardPressureKpa } = require(path.join(BUILD, 'utils/altitude.js'));
+const { percentileFromHistogram, HIST_BIN_KMH } = require(path.join(BUILD, 'services/speedStats.js'));
 
 const M_PER_DEG_LAT = 111132;
 const T0 = 1700000000000;
@@ -166,6 +168,86 @@ function makeFix(tSec, northM, speedMs, altitude, accuracy = 5) {
   const est = estimateGearAndRpm(POLO_TRACK_2026, 100);
   console.log(`      a 100 km/h -> ${est.gear}a marcha, ${Math.round(est.rpm)} rpm`);
   check('rpm plausibles a 100 km/h', est.rpm, 2600, 900);
+}
+
+// ---------------------------------------------------------------- 8. altitud
+{
+  console.log('\n— Corrección de potencia por altitud (SAE J1349) —');
+  // Al nivel del mar y a 25 °C el factor debe quedar pegado a 1: son las
+  // condiciones de referencia de la norma.
+  check('presión al nivel del mar (kPa)', standardPressureKpa(0), 101.3, 0.1);
+  check('presión en Quito (kPa)', standardPressureKpa(2850), 71.5, 0.5);
+  check('factor al nivel del mar', sae1349Factor(0, 25), 0.973, 0.01);
+
+  const quito = altitudeEffect(POLO_TRACK_2026, 2850, 18);
+  check('potencia en Quito (CV)', quito.powerCv, 77, 2);
+  check('par en Quito (Nm)', quito.torqueNm, 108, 3);
+  // La regla práctica del oficio (3 % por cada 1.000 pies) da 24-30 % en este
+  // rango: sirve de contraste independiente de la fórmula.
+  check('pérdida en Quito (%)', quito.lossPct, 30, 3);
+  check('peso/potencia en Quito (kg/CV)', quito.weightPerPowerKg, 14.1, 0.5);
+  check('0-100 esperado en Quito (s)', (quito.target0100Min + quito.target0100Max) / 2, 14.0, 0.8);
+
+  const mar = altitudeEffect(POLO_TRACK_2026, 0, 25);
+  check('al nivel del mar no pierde', mar.lossPct, -2.8, 1);
+  check('más altura, menos potencia',
+    altitudeEffect(POLO_TRACK_2026, 3500, 15).powerCv < quito.powerCv ? 1 : 0, 1, 0);
+}
+
+// ---------------------------------------------------------------- 9. análisis
+{
+  console.log('\n— Máxima sostenida, percentiles y tiempo en exceso —');
+  const e = new TripEngine(POLO_TRACK_2026, T0);
+  e.speedLimitKmh = 90;
+
+  // 100 s a 100 km/h, con UN pico falso de 160 km/h en medio: el pico no debe
+  // contaminar la máxima sostenida.
+  const v = 100 / 3.6;
+  let dist = 0;
+  for (let t = 0; t <= 100; t++) {
+    const esPico = t === 50;
+    const vel = esPico ? 160 / 3.6 : v;
+    dist += vel;
+    e.ingest(makeFix(t, dist, vel, 2850));
+  }
+  const s = e.stats(T0 + 100000);
+  check('máxima pico (km/h)', s.maxSpeedKmh, 160, 0.5);
+  check('máxima sostenida ignora el pico', s.analysis.sustainedMaxKmh, 100, 1.5);
+  check('percentil 85 (km/h)', s.analysis.p85Kmh, 100, HIST_BIN_KMH);
+  check('tiempo sobre 90 km/h (s)', s.analysis.overLimitMs / 1000, 100, 2);
+
+  // Histograma repartido: mitad a 40, mitad a 120 → el P85 debe caer arriba.
+  const hist = new Array(24).fill(0);
+  hist[4] = 50000;  // 40-50 km/h
+  hist[12] = 50000; // 120-130 km/h
+  check('P50 en el tramo lento', percentileFromHistogram(hist, 0.5), 50, 12);
+  check('P85 en el tramo rápido', percentileFromHistogram(hist, 0.85), 128, 12);
+}
+
+// ---------------------------------------------------------------- 10. en marcha
+{
+  console.log('\n— Recuperación 60 → 100 km/h sin detenerse —');
+  const e = new TripEngine(POLO_TRACK_2026, T0);
+  const a = 1.9; // m/s², plausible en 3ª/4ª en altura
+  let dist = 0;
+  let vel = 50 / 3.6;
+
+  // Rueda a 50, luego acelera a fondo hasta 115 km/h.
+  for (let i = 0; i <= 10; i++) {
+    dist += vel;
+    e.ingest(makeFix(i, dist, vel, 2850));
+  }
+  const tInicio = 10;
+  for (let i = 1; i <= 60; i++) {
+    const t = tInicio + i * 0.5;
+    vel = Math.min(115 / 3.6, 50 / 3.6 + a * (i * 0.5));
+    dist += vel * 0.5;
+    e.ingest(makeFix(t, dist, vel, 2850));
+  }
+  const s = e.stats(T0 + 60000);
+  const teorico = (100 - 60) / 3.6 / a;
+  check('60 → 100 en marcha (s)', s.perf.roll60_100, teorico, 0.3);
+  check('no inventa un 0-100', s.perf.t0_100 == null ? 1 : 0, 1, 0);
 }
 
 console.log(failures === 0 ? '\nTodas las comprobaciones pasaron.' : `\n${failures} comprobaciones fallaron.`);

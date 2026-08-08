@@ -5,6 +5,9 @@ import React, { useMemo } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { RunningCar } from '@/components/RunningCar';
+import { ShiftLight } from '@/components/ShiftLight';
+import { SpeedRibbon } from '@/components/SpeedRibbon';
 import { Speedometer } from '@/components/Speedometer';
 import {
   Badge,
@@ -18,6 +21,7 @@ import {
 import { useSettings } from '@/state/SettingsContext';
 import { useTracking } from '@/state/TrackingContext';
 import { colors, font, gradeColor, mono, radius, spacing } from '@/theme/theme';
+import { altitudeEffect, compare0100 } from '@/utils/altitude';
 import {
   formatAccel,
   formatDistance,
@@ -27,7 +31,7 @@ import {
   toDisplaySpeed,
 } from '@/utils/format';
 import { cardinal } from '@/utils/geo';
-import { estimateGearAndRpm } from '@/vehicles/polo';
+import { estimateGearAndRpm, rollingCircumferenceM } from '@/vehicles/polo';
 
 const TAB_BAR_SPACE = 78;
 
@@ -66,6 +70,16 @@ export default function SpeedScreen() {
     () => estimateGearAndRpm(vehicle, live.speedKmh),
     [vehicle, live.speedKmh]
   );
+
+  // La potencia real cae con la altitud en un motor atmosférico. Se recalcula
+  // en escalones de 50 m para no rehacer la cuenta con cada temblor del GPS.
+  const altitude = live.altitude;
+  const effect = useMemo(() => {
+    if (altitude == null) return null;
+    return altitudeEffect(vehicle, Math.round(altitude / 50) * 50);
+  }, [vehicle, altitude]);
+
+  const circumference = useMemo(() => rollingCircumferenceM(vehicle), [vehicle]);
 
   const handleStop = () => {
     Alert.alert('Finalizar viaje', '¿Guardar este viaje en el historial?', [
@@ -180,6 +194,24 @@ export default function SpeedScreen() {
           />
         </View>
 
+        {/* Tira de cambio de marcha */}
+        <View style={styles.shiftWrap}>
+          <ShiftLight
+            rpm={gear?.rpm ?? null}
+            redlineRpm={vehicle.redlineRpm}
+            gear={gear?.gear ?? null}
+          />
+        </View>
+
+        {/* El carro corriendo: ruedas a las vueltas reales, morro que cabecea */}
+        <RunningCar
+          speedKmh={live.speedKmh}
+          gForce={live.gForce}
+          tireCircumferenceM={circumference}
+          maxKmh={vehicle.topSpeedKmh}
+          height={104}
+        />
+
         {overLimit && (
           <View style={styles.limitBanner}>
             <Ionicons name="warning" size={15} color={colors.danger} />
@@ -189,6 +221,17 @@ export default function SpeedScreen() {
             </Text>
           </View>
         )}
+
+        {/* Último minuto de velocidad */}
+        <GlassCard style={styles.ribbonCard}>
+          <SpeedRibbon
+            speedKmh={live.speedKmh}
+            maxKmh={vehicle.topSpeedKmh}
+            limitKmh={settings.speedAlertEnabled ? settings.speedLimit : null}
+            seconds={60}
+            height={52}
+          />
+        </GlassCard>
 
         {/* ---------------- control del viaje ---------------- */}
         <View style={styles.controls}>
@@ -237,17 +280,25 @@ export default function SpeedScreen() {
             icon="time-outline"
           />
           <StatTile
-            label="Máxima"
+            label="Máxima (pico)"
             value={formatNumber(toDisplaySpeed(shown.maxSpeedKmh, unit))}
             unit={unitLabel}
             icon="flash-outline"
             tint={colors.lime}
           />
           <StatTile
-            label="Media"
-            value={formatNumber(toDisplaySpeed(shown.avgSpeedKmh, unit))}
+            label="Máxima sostenida"
+            value={formatNumber(toDisplaySpeed(shown.analysis.sustainedMaxKmh, unit))}
             unit={unitLabel}
-            icon="analytics-outline"
+            icon="shield-checkmark-outline"
+            tint={colors.lime}
+          />
+          <StatTile
+            label="Percentil 85"
+            value={formatNumber(toDisplaySpeed(shown.analysis.p85Kmh, unit))}
+            unit={unitLabel}
+            icon="stats-chart-outline"
+            tint={colors.accent}
           />
           <StatTile
             label="Media en marcha"
@@ -261,7 +312,18 @@ export default function SpeedScreen() {
             icon="hourglass-outline"
             tint={colors.textMuted}
           />
+          <StatTile
+            label="Sobre el límite"
+            value={formatDuration(shown.analysis.overLimitMs)}
+            icon="warning-outline"
+            tint={shown.analysis.overLimitMs > 0 ? colors.danger : colors.textMuted}
+          />
         </StatGrid>
+        <Text style={styles.footnote}>
+          La máxima sostenida es la mayor velocidad que mantuviste 5 segundos seguidos: un solo
+          pico raro del GPS no puede inflarla. El percentil 85 es la velocidad por debajo de la
+          cual circulaste el 85 % del tiempo en movimiento.
+        </Text>
 
         {/* ---------------- altimetría ---------------- */}
         <SectionTitle>Altitud y desnivel</SectionTitle>
@@ -307,6 +369,53 @@ export default function SpeedScreen() {
           </View>
         </GlassCard>
 
+        {/* ---------------- potencia según la altitud ---------------- */}
+        {effect && (
+          <>
+            <SectionTitle right={<Badge label="SAE J1349" tint={colors.amber} />}>
+              Potencia a esta altitud
+            </SectionTitle>
+            <GlassCard>
+              <View style={styles.powerRow}>
+                <View>
+                  <Text style={styles.powerValue}>
+                    {Math.round(effect.powerCv)}
+                    <Text style={styles.powerUnit}> CV</Text>
+                  </Text>
+                  <Text style={styles.powerSub}>
+                    de {vehicle.powerCv} CV · {Math.round(effect.torqueNm)} Nm
+                  </Text>
+                </View>
+                <View style={styles.powerLossBox}>
+                  <Text style={styles.powerLoss}>−{effect.lossPct.toFixed(0)} %</Text>
+                  <Text style={styles.powerLossHint}>
+                    {Math.round(effect.altitudeM)} m · {effect.pressureKpa.toFixed(0)} kPa
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.powerBarTrack}>
+                <View
+                  style={[
+                    styles.powerBarFill,
+                    { width: `${Math.max(6, (1 / effect.factor) * 100)}%` },
+                  ]}
+                />
+              </View>
+              <Text style={styles.powerNote}>
+                Tu 1.6 es atmosférico: aspira el aire que haya. Aquí arriba entra menos oxígeno y
+                el motor entrega {Math.round(effect.powerCv)} CV en vez de {vehicle.powerCv}. Un
+                0-100 realista en este punto es de{' '}
+                <Text style={styles.powerNoteStrong}>
+                  {effect.target0100Min.toFixed(1).replace('.', ',')} a{' '}
+                  {effect.target0100Max.toFixed(1).replace('.', ',')} s
+                </Text>
+                , no los {vehicle.accel0100Factory.toFixed(1).replace('.', ',')} s de fábrica, que
+                están medidos al nivel del mar.
+              </Text>
+            </GlassCard>
+          </>
+        )}
+
         {/* ---------------- prestaciones ---------------- */}
         <SectionTitle right={<Badge label="AUTOMÁTICO" tint={colors.lime} />}>
           Prestaciones de la sesión
@@ -339,26 +448,55 @@ export default function SpeedScreen() {
             compact
           />
           <StatTile
-            label="Vel. en meta"
-            value={
-              live.perf.vTrap != null
-                ? `${formatNumber(toDisplaySpeed(live.perf.vTrap, unit))} ${unitLabel}`
-                : '—'
-            }
-            icon="speedometer-outline"
+            label="60 → 100 en marcha"
+            value={formatAccel(live.perf.roll60_100)}
+            icon="trending-up-outline"
+            tint={live.perf.roll60_100 != null ? colors.accent : colors.textFaint}
             compact
           />
           <StatTile
-            label="Fábrica 0-100"
-            value={`${vehicle.accel0100Factory.toFixed(1).replace('.', ',')} s`}
-            icon="document-text-outline"
-            tint={colors.textMuted}
+            label="80 → 120 en marcha"
+            value={formatAccel(live.perf.roll80_120)}
+            icon="trending-up-outline"
+            tint={live.perf.roll80_120 != null ? colors.accent : colors.textFaint}
             compact
           />
         </StatGrid>
+
+        {(() => {
+          const veredicto = effect ? compare0100(live.perf.t0_100, effect) : null;
+          if (!veredicto) return null;
+          const bueno = veredicto.verdict !== 'peor';
+          return (
+            <View
+              style={[
+                styles.verdictCard,
+                { borderColor: bueno ? `${colors.lime}55` : `${colors.amber}55` },
+              ]}
+            >
+              <Ionicons
+                name={bueno ? 'trophy' : 'information-circle'}
+                size={17}
+                color={bueno ? colors.lime : colors.amber}
+              />
+              <Text style={styles.verdictText}>
+                {veredicto.verdict === 'mejor' &&
+                  `Por debajo de lo esperado a esta altitud, y por ${veredicto.deltaSeconds
+                    .toFixed(2)
+                    .replace('.', ',')} s. Muy buena pasada.`}
+                {veredicto.verdict === 'dentro' &&
+                  'Justo en lo que cabe esperar del carro a esta altitud.'}
+                {veredicto.verdict === 'peor' &&
+                  `${veredicto.deltaSeconds.toFixed(2).replace('.', ',')} s por encima del rango esperado aquí. Suele ser el peso a bordo, la pendiente o una salida poco limpia.`}
+              </Text>
+            </View>
+          );
+        })()}
+
         <Text style={styles.footnote}>
-          Los tiempos se detectan solos cuando arrancas desde parado. Medidos por GPS: sirven para
-          comparar pasadas entre sí, no son cifras de banco de pruebas.
+          Las arrancadas se detectan solas al salir desde parado. Las recuperaciones en marcha (60
+          → 100 y 80 → 120) se miden sin detenerte: es lo que de verdad usas para adelantar, y en
+          un motor atmosférico en altura es donde más se nota la falta de aire.
         </Text>
 
         {/* ---------------- dinámica ---------------- */}
@@ -415,6 +553,38 @@ const styles = StyleSheet.create({
   statusDim: { fontSize: 10, color: colors.textFaint, fontFamily: mono },
 
   gaugeWrap: { alignItems: 'center', marginVertical: spacing.sm },
+  shiftWrap: { marginTop: spacing.xs, marginBottom: spacing.sm },
+  ribbonCard: { marginTop: spacing.sm, paddingVertical: spacing.md },
+
+  powerRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
+  powerValue: { ...font.display, color: colors.text, fontVariant: ['tabular-nums'] },
+  powerUnit: { fontSize: 15, color: colors.textMuted, fontWeight: '700' },
+  powerSub: { fontSize: 12, color: colors.textFaint, marginTop: 2, fontFamily: mono },
+  powerLossBox: { alignItems: 'flex-end' },
+  powerLoss: { fontSize: 22, fontWeight: '700', color: colors.amber, fontVariant: ['tabular-nums'] },
+  powerLossHint: { fontSize: 10, color: colors.textFaint, fontFamily: mono, marginTop: 3 },
+  powerBarTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.track,
+    marginTop: spacing.md,
+    overflow: 'hidden',
+  },
+  powerBarFill: { height: '100%', borderRadius: 3, backgroundColor: colors.amber },
+  powerNote: { fontSize: 12, color: colors.textMuted, lineHeight: 18, marginTop: spacing.md },
+  powerNoteStrong: { color: colors.text, fontWeight: '700' },
+
+  verdictCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    marginTop: spacing.md,
+    padding: spacing.lg,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    backgroundColor: colors.surface,
+  },
+  verdictText: { flex: 1, fontSize: 13, color: colors.textMuted, lineHeight: 18 },
 
   limitBanner: {
     flexDirection: 'row',

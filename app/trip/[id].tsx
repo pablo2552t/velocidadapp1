@@ -13,7 +13,7 @@ import {
 import MapView, { Marker } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ElevationChart, SpeedChart } from '@/components/charts';
+import { ElevationChart, SpeedChart, SpeedHistogram } from '@/components/charts';
 import { SpeedTrace } from '@/components/SpeedTrace';
 import {
   Badge,
@@ -25,8 +25,10 @@ import {
   StatTile,
 } from '@/components/ui';
 import { Trip, deleteTrip, getTrip } from '@/services/database';
+import { HIST_BIN_KMH, analyzePoints } from '@/services/speedStats';
 import { useSettings } from '@/state/SettingsContext';
 import { colors, font, spacing } from '@/theme/theme';
+import { altitudeEffect } from '@/utils/altitude';
 import {
   formatAccel,
   formatDistance,
@@ -69,6 +71,21 @@ export default function TripDetailScreen() {
     if (!trip || trip.points.length === 0) return null;
     return regionForPoints(trip.points.map((p) => ({ latitude: p.lat, longitude: p.lon })));
   }, [trip]);
+
+  // Los viajes grabados antes de que existiera este análisis no lo tienen
+  // guardado, así que se reconstruye desde la traza.
+  const analysis = useMemo(() => {
+    if (!trip) return null;
+    if (trip.analysis) return trip.analysis;
+    if (trip.points.length < 2) return null;
+    return analyzePoints(trip.points, settings.speedLimit);
+  }, [trip, settings.speedLimit]);
+
+  const effect = useMemo(() => {
+    const alt = analysis?.medianAltitude ?? trip?.maxAlt ?? null;
+    if (alt == null) return null;
+    return altitudeEffect(settings.vehicle, Math.round(alt / 50) * 50);
+  }, [analysis, trip, settings.vehicle]);
 
   const confirmDelete = () => {
     if (!trip) return;
@@ -240,6 +257,59 @@ export default function TripDetailScreen() {
             <SpeedChart points={trip.points} height={160} />
           </GlassCard>
 
+          {analysis && (
+            <>
+              <SectionTitle right={<Badge label={`P85 ${Math.round(analysis.p85Kmh)}`} />}>
+                A qué velocidad fuiste de verdad
+              </SectionTitle>
+              <GlassCard>
+                <SpeedHistogram
+                  histogram={analysis.histogram}
+                  binKmh={HIST_BIN_KMH}
+                  p85={analysis.p85Kmh}
+                  height={160}
+                />
+              </GlassCard>
+              <StatGrid>
+                <StatTile
+                  label="Máxima sostenida"
+                  value={formatNumber(toDisplaySpeed(analysis.sustainedMaxKmh, unit))}
+                  unit={unitLabel}
+                  icon="shield-checkmark-outline"
+                  tint={colors.lime}
+                  compact
+                />
+                <StatTile
+                  label="Percentil 85"
+                  value={formatNumber(toDisplaySpeed(analysis.p85Kmh, unit))}
+                  unit={unitLabel}
+                  icon="stats-chart-outline"
+                  tint={colors.accent}
+                  compact
+                />
+                <StatTile
+                  label="Mediana"
+                  value={formatNumber(toDisplaySpeed(analysis.p50Kmh, unit))}
+                  unit={unitLabel}
+                  icon="git-commit-outline"
+                  compact
+                />
+                <StatTile
+                  label="Sobre el límite"
+                  value={formatDuration(analysis.overLimitMs)}
+                  icon="warning-outline"
+                  tint={analysis.overLimitMs > 0 ? colors.danger : colors.textMuted}
+                  compact
+                />
+              </StatGrid>
+              <Text style={styles.footnote}>
+                La máxima que aparece arriba ({formatNumber(toDisplaySpeed(trip.maxSpeedKmh, unit))}{' '}
+                {unitLabel}) es el pico de una sola lectura del GPS. La sostenida es la mayor que
+                mantuviste 5 segundos seguidos, y es la cifra en la que se puede confiar.
+              </Text>
+            </>
+          )}
+
           {/* ------------------- altimetría ------------------- */}
           <SectionTitle
             right={
@@ -304,7 +374,30 @@ export default function TripDetailScreen() {
                   icon="flag-outline"
                   compact
                 />
+                <StatTile
+                  label="60 → 100 en marcha"
+                  value={formatAccel(trip.perf.roll60_100)}
+                  icon="trending-up-outline"
+                  tint={trip.perf.roll60_100 != null ? colors.accent : colors.textFaint}
+                  compact
+                />
+                <StatTile
+                  label="80 → 120 en marcha"
+                  value={formatAccel(trip.perf.roll80_120)}
+                  icon="trending-up-outline"
+                  tint={trip.perf.roll80_120 != null ? colors.accent : colors.textFaint}
+                  compact
+                />
               </StatGrid>
+              {effect && (
+                <Text style={styles.footnote}>
+                  A los {Math.round(effect.altitudeM)} m de este viaje el motor dispuso de unos{' '}
+                  {Math.round(effect.powerCv)} CV de sus {settings.vehicle.powerCv}, así que el
+                  0-100 esperable rondaba los{' '}
+                  {effect.target0100Min.toFixed(1).replace('.', ',')}–
+                  {effect.target0100Max.toFixed(1).replace('.', ',')} s.
+                </Text>
+              )}
             </>
           )}
 

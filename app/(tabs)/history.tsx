@@ -169,6 +169,14 @@ export default function HistoryScreen() {
           <SectionTitle>Récords</SectionTitle>
           <StatGrid>
             <StatTile
+              label="Máxima sostenida"
+              value={formatNumber(toDisplaySpeed(totals.bestSustainedKmh, unit))}
+              unit={unitLabel}
+              icon="shield-checkmark-outline"
+              tint={totals.bestSustainedKmh > 0 ? colors.lime : colors.textFaint}
+              compact
+            />
+            <StatTile
               label="0 → 100 km/h"
               value={formatAccel(totals.best0_100)}
               icon="rocket-outline"
@@ -191,6 +199,27 @@ export default function HistoryScreen() {
               label="402 m"
               value={formatAccel(totals.best402m)}
               icon="flag-outline"
+              compact
+            />
+            <StatTile
+              label="60 → 100 en marcha"
+              value={formatAccel(totals.bestRoll60_100)}
+              icon="trending-up-outline"
+              tint={totals.bestRoll60_100 != null ? colors.accent : colors.textFaint}
+              compact
+            />
+            <StatTile
+              label="80 → 120 en marcha"
+              value={formatAccel(totals.bestRoll80_120)}
+              icon="trending-up-outline"
+              tint={totals.bestRoll80_120 != null ? colors.accent : colors.textFaint}
+              compact
+            />
+            <StatTile
+              label="Total sobre el límite"
+              value={formatDuration(totals.overLimitMs, true)}
+              icon="warning-outline"
+              tint={totals.overLimitMs > 0 ? colors.danger : colors.textMuted}
               compact
             />
           </StatGrid>

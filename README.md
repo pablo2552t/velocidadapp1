@@ -19,7 +19,22 @@ React Native + Expo SDK 54. Uso personal.
 velocidad, zona roja a partir de la velocidad máxima del carro, marca de la velocidad
 punta de la sesión y marca del límite que configures. La lectura viene de la velocidad
 Doppler del receptor GPS, no de derivar posiciones, así que responde de inmediato.
-Debajo aparece la marcha y las rpm estimadas.
+Encima, una tira de cambio de marcha que pasa de verde a rojo al acercarse al corte;
+debajo, el carro corriendo con las ruedas girando a las vueltas que de verdad daría la
+rueda a esa velocidad y el morro cabeceando al frenar y acelerar. Y una cinta con la
+velocidad del último minuto.
+
+**Potencia real según la altitud** — El 1.6 MSI es atmosférico: respira el aire que haya.
+La app aplica el factor de corrección **SAE J1349** a la altitud a la que estás y te dice
+cuántos CV tienes de verdad — en Quito son unos 77 de los 110, un 30 % menos. Con eso
+calcula el 0-100 que cabe esperar ahí (~14 s, no los 10,0 s de fábrica, medidos al nivel
+del mar) y compara tus marcas contra ese objetivo en vez de contra un número imposible.
+
+**Análisis de velocidad** — Además de la media y la máxima:
+*máxima sostenida* (la mayor que mantuviste 5 segundos, inmune a un pico falso del GPS),
+*percentil 85* (el criterio con el que los ingenieros de tránsito fijan límites: la
+velocidad por debajo de la cual circulaste el 85 % del tiempo), *histograma* del reparto
+del tiempo por rango de velocidad, y *tiempo por encima del límite*.
 
 **Altitud y descensos** — Altitud sobre el nivel del mar, pendiente instantánea en % con
 indicador de subida/bajada, y desnivel acumulado separado en ascenso (D+) y descenso (D−).
@@ -30,8 +45,9 @@ ibas rápido y dónde te frenaste. Cámara que te sigue con el mapa orientado al
 inclinado, tres estilos de mapa y HUD flotante con velocidad y altitud.
 
 **Cronómetro** — Cronómetro manual con vueltas, y un modo arrancada que mide solo, sin
-tocar nada: 0-60, 0-100, 60-100, frenada 100-0 y 402 m (¼ de milla) con velocidad en meta.
-Compara tu mejor 0-100 contra el dato de fábrica del Polo Track.
+tocar nada: 0-60, 0-100, frenada 100-0, 201 m y 402 m con velocidad en meta. Y
+**recuperaciones en marcha** (60→100 y 80→120 sin detenerte), que es lo que de verdad
+usas para adelantar y lo que mejor describe al carro en altura.
 
 **Historial y dashboard** — Resumen de todo: kilómetros, horas al volante, récord de
 velocidad, desnivel total, combustible y gasto estimado, barras de distancia de los
@@ -39,8 +55,11 @@ velocidad, desnivel total, combustible y gasto estimado, barras de distancia de 
 nombre del lugar), tiempo total, tiempo en marcha y detenido, medias, gráfica de
 velocidad, perfil de elevación y consumo estimado.
 
-**Garaje** — Ficha técnica completa del Polo Track 1.6 MSI, editable, más los ajustes de
-la app: unidades, límite de velocidad, vibración, pausa automática, precio del combustible.
+**Garaje** — Ficha técnica completa del Polo Track 1.6 MSI agrupada por motor, transmisión,
+chasis y frenos, seguridad y carrocería; toda editable. Incluye la potencia disponible aquí
+y ahora, y una tabla de cuánto entregaría el motor desde Guayaquil hasta Papallacta. Más
+los ajustes de la app: unidades, límite de velocidad, vibración, pausa automática, precio
+del combustible.
 
 ---
 
@@ -93,11 +112,15 @@ La ficha viene precargada y es editable desde el Garaje:
 
 | | |
 |---|---|
-| Motor | EA211 1.6 MSI · 4 cilindros · 16v · aspirado con VVT |
-| Potencia | 110 CV (108 hp) @ 5.750 rpm |
-| Par máximo | 155 Nm @ 4.000 rpm |
+| Motor | EA211 1.6 MSI · 1.598 cc · 4 cil. · DOHC 16v con VVT · atmosférico |
+| Diámetro × carrera | 76,5 × 86,9 mm |
+| Potencia | 110 CV (108 hp) @ 5.750 rpm — **~77 CV a 2.850 m** |
+| Par máximo | 155 Nm @ 3.800-4.000 rpm |
 | Transmisión | Manual de 5 velocidades, tracción delantera |
-| 0-100 km/h | 10,0 s de fábrica · ~10,6 s medidos por prensa |
+| Suspensión | McPherson delante · eje de brazos longitudinales detrás |
+| Frenos | Discos ventilados delante · tambor detrás |
+| Seguridad | 4 airbags · ABS+EBD · ESC · ASR · HHC · ISOFIX |
+| 0-100 km/h | 10,0 s de fábrica · ~10,6 s medidos por prensa · **~14 s en Quito** |
 | Velocidad máxima | 187 km/h |
 | Peso en orden de marcha | 1.080 kg (9,8 kg/CV) |
 | Tanque | 52 L |
@@ -162,7 +185,8 @@ Decisiones que importan:
 `npm run test:engine` alimenta el motor con recorridos sintéticos de física conocida y
 comprueba el resultado contra el valor teórico: crucero constante, arrancada a
 aceleración fija, subida y bajada de 100 m con ruido, cinco minutos parado con deriva de
-GPS, lecturas basura y frenada. Las 22 comprobaciones pasan.
+GPS, lecturas basura, frenada, corrección por altitud, máxima sostenida frente a un pico
+falso, percentiles y recuperación en marcha. Las 40 comprobaciones pasan.
 
 ---
 
@@ -172,7 +196,11 @@ GPS, lecturas basura y frenada. Las 22 comprobaciones pasan.
   en el consumo declarado, la velocidad media y las aceleraciones registradas. Sirven para
   comparar viajes entre sí; el computador de a bordo manda.
 - Las **rpm y la marcha son estimadas** a partir de la medida de la llanta y unas
-  relaciones de caja aproximadas. No hay conexión OBD-II.
+  relaciones de caja aproximadas. No hay conexión OBD-II, así que la tira de cambio es una
+  guía, no un tacómetro.
+- La **corrección por altitud** usa la atmósfera estándar y una temperatura fija de 20 °C.
+  Un día muy caluroso resta algo más de potencia; un día frío, algo menos. El orden de
+  magnitud sí es correcto y coincide con la regla práctica de 3 % por cada 1.000 pies.
 - Los **tiempos de aceleración** son medidos por GPS: el margen típico es de una a dos
   décimas. Valen para comparar tus propias pasadas, no como cifras de banco de pruebas.
 - El **seguimiento en segundo plano** funciona mientras iOS mantenga viva la app. Si el

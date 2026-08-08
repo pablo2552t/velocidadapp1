@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -19,18 +19,30 @@ import { deleteAllTrips } from '@/services/database';
 import { useSettings } from '@/state/SettingsContext';
 import { useTracking } from '@/state/TrackingContext';
 import { colors, font, mono, radius, spacing } from '@/theme/theme';
+import { REFERENCE_ALTITUDES, altitudeEffect } from '@/utils/altitude';
 import { SpeedUnit, formatNumber } from '@/utils/format';
-import { kmhPer1000Rpm, powerToWeight, rollingCircumferenceM } from '@/vehicles/polo';
+import {
+  kmhPer1000Rpm,
+  powerToWeight,
+  rollingCircumferenceM,
+  specificPower,
+  strokeToBore,
+} from '@/vehicles/polo';
 
 const TAB_BAR_SPACE = 78;
 
 export default function GarageScreen() {
   const insets = useSafeAreaInsets();
   const { settings, update, updateVehicle, reset } = useSettings();
-  const { resetSession, permission, requestPermission } = useTracking();
+  const { resetSession, permission, requestPermission, live } = useTracking();
   const [showRatios, setShowRatios] = useState(false);
 
   const v = settings.vehicle;
+
+  const effect = useMemo(() => {
+    if (live.altitude == null) return null;
+    return altitudeEffect(v, Math.round(live.altitude / 50) * 50);
+  }, [v, live.altitude]);
 
   const confirmClearHistory = () => {
     Alert.alert('Borrar historial', 'Se eliminarán todos los viajes guardados. No se puede deshacer.', [
@@ -100,18 +112,110 @@ export default function GarageScreen() {
         </View>
       </LinearGradient>
 
+      {/* ------------------- potencia real a la altitud actual ------------------- */}
+      {effect && (
+        <>
+          <SectionTitle right={<Badge label="AQUÍ Y AHORA" tint={colors.amber} />}>
+            Potencia disponible
+          </SectionTitle>
+          <GlassCard>
+            <View style={styles.altRow}>
+              <View>
+                <Text style={styles.altPower}>
+                  {Math.round(effect.powerCv)}
+                  <Text style={styles.altPowerUnit}> CV</Text>
+                </Text>
+                <Text style={styles.altPowerSub}>
+                  {Math.round(effect.torqueNm)} Nm · {effect.weightPerPowerKg.toFixed(1)} kg/CV
+                </Text>
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={styles.altLoss}>−{effect.lossPct.toFixed(0)} %</Text>
+                <Text style={styles.altHint}>{Math.round(effect.altitudeM)} m sobre el mar</Text>
+              </View>
+            </View>
+            <Text style={styles.altNote}>
+              Un motor atmosférico entrega lo que le permita el aire que respira. Estas son las
+              cifras corregidas por la norma SAE J1349 para la altitud a la que estás ahora mismo.
+            </Text>
+          </GlassCard>
+
+          <SectionTitle>Cómo cambia según dónde estés</SectionTitle>
+          <GlassCard padded={false}>
+            {REFERENCE_ALTITUDES.map((ref, i) => {
+              const e = altitudeEffect(v, ref.altitudeM);
+              const aqui = Math.abs(ref.altitudeM - effect.altitudeM) < 250;
+              return (
+                <View key={ref.label}>
+                  {i > 0 && <Divider />}
+                  <View style={styles.refRow}>
+                    <Text style={[styles.refLabel, aqui && { color: colors.accent }]}>
+                      {ref.label}
+                    </Text>
+                    <Text style={styles.refAlt}>{formatNumber(ref.altitudeM)} m</Text>
+                    <View style={styles.refBarTrack}>
+                      <View
+                        style={[
+                          styles.refBarFill,
+                          {
+                            width: `${(1 / e.factor) * 100}%`,
+                            backgroundColor: aqui ? colors.accent : colors.textFaint,
+                          },
+                        ]}
+                      />
+                    </View>
+                    <Text style={[styles.refCv, aqui && { color: colors.accent }]}>
+                      {Math.round(e.powerCv)} CV
+                    </Text>
+                  </View>
+                </View>
+              );
+            })}
+          </GlassCard>
+        </>
+      )}
+
       {/* ------------------- ficha técnica ------------------- */}
-      <SectionTitle>Ficha técnica</SectionTitle>
+      <SectionTitle>Motor</SectionTitle>
       <GlassCard padded={false}>
-        <SpecRow label="Motor" value={`${v.engine} · ${v.cylinders} cil. ${v.valves}v`} />
+        <SpecRow label="Denominación" value={v.engine} />
         <Divider />
-        <SpecRow label="Alimentación" value={v.aspiration} />
+        <SpecRow label="Familia" value={`${v.engineFamily} · ${v.layout.toLowerCase()}`} />
         <Divider />
-        <SpecRow label="Potencia" value={`${v.powerCv} CV (${v.powerHp} hp) @ ${formatNumber(v.powerRpm)} rpm`} />
+        <SpecRow
+          label="Cilindrada"
+          value={`${formatNumber(v.displacementCc)} cc · ${v.cylinders} cilindros`}
+        />
         <Divider />
-        <SpecRow label="Par máximo" value={`${v.torqueNm} Nm @ ${formatNumber(v.torqueRpm)} rpm`} />
+        <SpecRow label="Diámetro × carrera" value={`${v.boreMm} × ${v.strokeMm} mm`} />
         <Divider />
-        <SpecRow label="Transmisión" value={`${v.transmission} de ${v.gearCount} velocidades`} />
+        <SpecRow
+          label="Carrera / diámetro"
+          value={`${strokeToBore(v).toFixed(2)} — de carrera larga, empuja abajo`}
+        />
+        <Divider />
+        <SpecRow label="Distribución" value={`${v.valvetrain} · ${v.valves} válvulas`} />
+        <Divider />
+        <SpecRow label="Alimentación" value={`${v.aspiration} · ${v.injection}`} />
+        <Divider />
+        <SpecRow label="Combustible" value={v.fuel} />
+        <Divider />
+        <SpecRow
+          label="Potencia"
+          value={`${v.powerCv} CV (${v.powerHp} hp) @ ${formatNumber(v.powerRpm)} rpm`}
+        />
+        <Divider />
+        <SpecRow
+          label="Par máximo"
+          value={`${v.torqueNm} Nm @ ${formatNumber(v.torqueRpm)}–${formatNumber(v.torqueRpmTo)} rpm`}
+        />
+        <Divider />
+        <SpecRow label="Potencia específica" value={`${specificPower(v).toFixed(1)} CV/litro`} />
+      </GlassCard>
+
+      <SectionTitle>Transmisión y prestaciones</SectionTitle>
+      <GlassCard padded={false}>
+        <SpecRow label="Caja" value={`${v.transmission} de ${v.gearCount} velocidades`} />
         <Divider />
         <SpecRow label="Tracción" value={v.drivetrain} />
         <Divider />
@@ -119,22 +223,63 @@ export default function GarageScreen() {
           label="0-100 km/h"
           value={`${v.accel0100Factory.toFixed(1).replace('.', ',')} s fábrica · ${v.accel0100Tested
             .toFixed(1)
-            .replace('.', ',')} s medido`}
+            .replace('.', ',')} s medido en prueba`}
         />
         <Divider />
         <SpecRow label="Velocidad máxima" value={`${v.topSpeedKmh} km/h`} />
         <Divider />
-        <SpecRow label="Peso en orden de marcha" value={`${formatNumber(v.curbWeightKg)} kg`} />
-        <Divider />
         <SpecRow label="Relación peso/potencia" value={`${powerToWeight(v).toFixed(1)} kg/CV`} />
         <Divider />
-        <SpecRow label="Tanque" value={`${v.fuelTankL} L`} />
+        <SpecRow
+          label="Velocidad en 5ª"
+          value={`${kmhPer1000Rpm(v, v.ratios.gears.length - 1).toFixed(1)} km/h por 1.000 rpm (aprox.)`}
+        />
+      </GlassCard>
+
+      <SectionTitle>Chasis, frenos y dirección</SectionTitle>
+      <GlassCard padded={false}>
+        <SpecRow label="Suspensión delantera" value={v.suspensionFront} />
+        <Divider />
+        <SpecRow label="Suspensión trasera" value={v.suspensionRear} />
+        <Divider />
+        <SpecRow label="Frenos delanteros" value={v.brakesFront} />
+        <Divider />
+        <SpecRow label="Frenos traseros" value={v.brakesRear} />
+        <Divider />
+        <SpecRow label="Dirección" value={v.steering} />
         <Divider />
         <SpecRow
-          label="Consumo"
-          value={`${v.consumptionCity} ciudad · ${v.consumptionHwy} ruta · ${v.consumptionMixed} mixto L/100 km`}
+          label="Llantas"
+          value={`${v.tire.widthMm}/${v.tire.aspect} R${v.tire.rimIn} · ${rollingCircumferenceM(v).toFixed(
+            2
+          )} m de rodadura`}
         />
         <Divider />
+        <SpecRow
+          label="Presión de inflado"
+          value={`${v.tirePressureFrontBar.toFixed(1)} / ${v.tirePressureRearBar.toFixed(
+            1
+          )} bar — confirma en el pilar de la puerta`}
+        />
+      </GlassCard>
+
+      <SectionTitle>Seguridad</SectionTitle>
+      <GlassCard padded={false}>
+        <SpecRow label="Airbags" value={`${v.airbags}`} />
+        <Divider />
+        {v.assists.map((a, i) => (
+          <View key={a}>
+            {i > 0 && <Divider />}
+            <View style={styles.assistRow}>
+              <Ionicons name="shield-checkmark-outline" size={14} color={colors.lime} />
+              <Text style={styles.assistText}>{a}</Text>
+            </View>
+          </View>
+        ))}
+      </GlassCard>
+
+      <SectionTitle>Carrocería y capacidades</SectionTitle>
+      <GlassCard padded={false}>
         <SpecRow
           label="Dimensiones"
           value={`${formatNumber(v.lengthMm)} × ${formatNumber(v.widthMm)} × ${formatNumber(
@@ -144,14 +289,23 @@ export default function GarageScreen() {
         <Divider />
         <SpecRow label="Distancia entre ejes" value={`${formatNumber(v.wheelbaseMm)} mm`} />
         <Divider />
-        <SpecRow label="Baúl" value={`${v.trunkL} L`} />
+        <SpecRow label="Peso en orden de marcha" value={`${formatNumber(v.curbWeightKg)} kg`} />
+        <Divider />
+        <SpecRow label="Baúl" value={`${v.trunkL} litros`} />
+        <Divider />
+        <SpecRow label="Tanque" value={`${v.fuelTankL} litros`} />
         <Divider />
         <SpecRow
-          label="Llantas"
-          value={`${v.tire.widthMm}/${v.tire.aspect} R${v.tire.rimIn} · ${rollingCircumferenceM(v).toFixed(
-            2
-          )} m de rodadura`}
+          label="Consumo"
+          value={`${v.consumptionCity} ciudad · ${v.consumptionHwy} ruta · ${v.consumptionMixed} mixto L/100 km`}
         />
+        <Divider />
+        <SpecRow
+          label="Autonomía teórica"
+          value={`${Math.round((v.fuelTankL / v.consumptionMixed) * 100)} km con el tanque lleno`}
+        />
+        <Divider />
+        <SpecRow label="Intervalo de servicio" value={`cada ${formatNumber(v.serviceIntervalKm)} km`} />
       </GlassCard>
       <Text style={styles.footnote}>
         Cifras del Polo Track 1.6 MSI para Sudamérica según Volkswagen y pruebas de prensa
@@ -456,6 +610,54 @@ const styles = StyleSheet.create({
   heroSpecUnit: { fontSize: 11, color: colors.textMuted, fontWeight: '600' },
   heroSpecLabel: { fontSize: 9, color: colors.textFaint, fontWeight: '800', letterSpacing: 0.7, marginTop: 2 },
   heroBadges: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+
+  altRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
+  altPower: { ...font.display, color: colors.text, fontVariant: ['tabular-nums'] },
+  altPowerUnit: { fontSize: 15, color: colors.textMuted, fontWeight: '700' },
+  altPowerSub: { fontSize: 12, color: colors.textFaint, marginTop: 2, fontFamily: mono },
+  altLoss: { fontSize: 22, fontWeight: '700', color: colors.amber, fontVariant: ['tabular-nums'] },
+  altHint: { fontSize: 10, color: colors.textFaint, fontFamily: mono, marginTop: 3 },
+  altNote: { fontSize: 12, color: colors.textMuted, lineHeight: 18, marginTop: spacing.md },
+
+  refRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: 11,
+    paddingHorizontal: spacing.lg,
+  },
+  refLabel: { fontSize: 12, color: colors.text, fontWeight: '600', width: 96 },
+  refAlt: {
+    fontSize: 10,
+    color: colors.textFaint,
+    fontFamily: mono,
+    width: 52,
+    textAlign: 'right',
+  },
+  refBarTrack: {
+    flex: 1,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: colors.track,
+    overflow: 'hidden',
+  },
+  refBarFill: { height: '100%', borderRadius: 3 },
+  refCv: {
+    fontSize: 12,
+    color: colors.textMuted,
+    fontFamily: mono,
+    width: 50,
+    textAlign: 'right',
+  },
+
+  assistRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: 11,
+    paddingHorizontal: spacing.lg,
+  },
+  assistText: { fontSize: 13, color: colors.text },
 
   specRow: {
     flexDirection: 'row',

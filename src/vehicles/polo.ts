@@ -29,21 +29,45 @@ export type Vehicle = {
   trim: string;
 
   engine: string;
+  engineFamily: string;
+  layout: string;
   displacementL: number;
+  displacementCc: number;
   cylinders: number;
   valves: number;
+  boreMm: number;
+  strokeMm: number;
+  valvetrain: string;
+  injection: string;
+  fuel: string;
   aspiration: string;
   powerHp: number;
   powerCv: number;
   powerRpm: number;
   torqueNm: number;
   torqueRpm: number;
+  torqueRpmTo: number;
   redlineRpm: number;
 
   transmission: string;
   gearCount: number;
   drivetrain: string;
   ratios: GearRatios;
+
+  suspensionFront: string;
+  suspensionRear: string;
+  brakesFront: string;
+  brakesRear: string;
+  steering: string;
+
+  airbags: number;
+  assists: string[];
+
+  /** Presión de inflado en bar. La real está en la etiqueta del pilar de la puerta. */
+  tirePressureFrontBar: number;
+  tirePressureRearBar: number;
+  /** Intervalo de servicio en km. */
+  serviceIntervalKm: number;
 
   /** 185/65 R15 → ancho 185 mm, perfil 65 %, llanta 15" */
   tire: { widthMm: number; aspect: number; rimIn: number };
@@ -76,15 +100,24 @@ export const POLO_TRACK_2026: Vehicle = {
   trim: '1.6 MSI MT5',
 
   engine: 'EA211 1.6 MSI',
+  engineFamily: 'EA211',
+  layout: 'Delantero transversal',
   displacementL: 1.6,
+  displacementCc: 1598,
   cylinders: 4,
   valves: 16,
-  aspiration: 'Aspirado (VVT)',
+  boreMm: 76.5,
+  strokeMm: 86.9,
+  valvetrain: 'DOHC 16v con distribución variable',
+  injection: 'Multipunto (MSI)',
+  fuel: 'Gasolina',
+  aspiration: 'Atmosférico',
   powerHp: 108,
   powerCv: 110,
   powerRpm: 5750,
   torqueNm: 155,
-  torqueRpm: 4000,
+  torqueRpm: 3800,
+  torqueRpmTo: 4000,
   redlineRpm: 6200,
 
   transmission: 'Manual',
@@ -92,6 +125,25 @@ export const POLO_TRACK_2026: Vehicle = {
   drivetrain: 'Delantera (FWD)',
   // APROXIMADAS: VW no publica el escalonamiento del Track. Ajustables en Garaje.
   ratios: { gears: [3.77, 2.09, 1.32, 0.94, 0.72], final: 4.06 },
+
+  suspensionFront: 'Independiente McPherson',
+  suspensionRear: 'Eje de brazos longitudinales',
+  brakesFront: 'Discos ventilados',
+  brakesRear: 'Tambor',
+  steering: 'Asistencia eléctrica (EPS)',
+
+  airbags: 4,
+  assists: [
+    'ABS con EBD',
+    'ESC control de estabilidad',
+    'ASR control de tracción',
+    'HHC arranque en pendiente',
+    'Anclajes ISOFIX',
+  ],
+
+  tirePressureFrontBar: 2.2,
+  tirePressureRearBar: 2.1,
+  serviceIntervalKm: 10000,
 
   tire: { widthMm: 185, aspect: 65, rimIn: 15 },
 
@@ -116,6 +168,19 @@ export const POLO_TRACK_2026: Vehicle = {
 /** Relación peso/potencia en kg por CV. */
 export function powerToWeight(v: Vehicle): number {
   return v.curbWeightKg / v.powerCv;
+}
+
+/** Potencia específica en CV por litro: cuánto exprime el motor su cilindrada. */
+export function specificPower(v: Vehicle): number {
+  return v.powerCv / v.displacementL;
+}
+
+/**
+ * Relación carrera/diámetro. Por encima de 1 el motor es "supercuadrado" a la
+ * inversa: carrera larga, que favorece el par abajo antes que las vueltas.
+ */
+export function strokeToBore(v: Vehicle): number {
+  return v.strokeMm / v.boreMm;
 }
 
 /** Circunferencia de rodadura en metros a partir de la medida de la llanta. */
