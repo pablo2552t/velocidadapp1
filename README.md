@@ -55,6 +55,12 @@ velocidad, desnivel total, combustible y gasto estimado, barras de distancia de 
 nombre del lugar), tiempo total, tiempo en marcha y detenido, medias, gráfica de
 velocidad, perfil de elevación y consumo estimado.
 
+**Tarjeta del carro** — Saludo, nombre y versión sobre una foto de tu carro flotando en un
+resplandor. Si le pones varias fotos tomadas caminando alrededor, la tarjeta **gira 360°**
+al arrastrarla: es el mismo truco de los visores de las marcas, una secuencia de fotos, no
+un modelo 3D. Sin fotos muestra una ilustración. Las imágenes se reescalan y **se quedan en
+el teléfono**.
+
 **Garaje** — Ficha técnica completa del Polo Track 1.6 MSI agrupada por motor, transmisión,
 chasis y frenos, seguridad y carrocería; toda editable. Incluye la potencia disponible aquí
 y ahora, y una tabla de cuánto entregaría el motor desde Guayaquil hasta Papallacta. Más

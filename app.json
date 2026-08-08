@@ -20,6 +20,8 @@
         "NSLocationWhenInUseUsageDescription": "Velocidad usa el GPS para medir tu velocidad, altitud y trazar el recorrido de tus viajes en tiempo real.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Permite que Velocidad siga registrando el viaje aunque la pantalla esté apagada o uses otra app.",
         "NSMotionUsageDescription": "Se usa para mejorar la precisión de la velocidad y detectar cuándo el carro está detenido.",
+        "NSPhotoLibraryUsageDescription": "Para elegir las fotos de tu carro y armar la tarjeta del garaje. Las fotos se quedan en tu teléfono.",
+        "NSCameraUsageDescription": "Para tomar las fotos de tu carro y armar la tarjeta del garaje.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },

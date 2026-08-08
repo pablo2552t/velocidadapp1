@@ -6,6 +6,8 @@ import { POLO_TRACK_2026, Vehicle } from '@/vehicles/polo';
 export type MapStyle = 'standard' | 'mutedStandard' | 'hybrid';
 
 export type Settings = {
+  /** Nombre para el saludo de la tarjeta del garaje. Vacío = sin nombre. */
+  driverName: string;
   unit: SpeedUnit;
   /** Límite en km/h a partir del cual avisa (siempre se guarda en km/h). */
   speedLimit: number;
@@ -23,6 +25,7 @@ export type Settings = {
 };
 
 const DEFAULTS: Settings = {
+  driverName: '',
   unit: 'kmh',
   speedLimit: 100,
   speedAlertEnabled: true,

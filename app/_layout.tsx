@@ -35,6 +35,10 @@ export default function RootLayout() {
                 name="trip/[id]"
                 options={{ presentation: 'card', animation: 'slide_from_right' }}
               />
+              <Stack.Screen
+                name="car-photos"
+                options={{ presentation: 'card', animation: 'slide_from_right' }}
+              />
             </Stack>
           </TrackingProvider>
         </SettingsProvider>

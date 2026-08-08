@@ -1,8 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import React, { useMemo, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useMemo, useState } from 'react';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { CarHero } from '@/components/CarHero';
+import { CarPhotos, NO_PHOTOS, loadCarPhotos } from '@/services/carPhotos';
 
 import {
   Badge,
@@ -36,6 +39,16 @@ export default function GarageScreen() {
   const { settings, update, updateVehicle, reset } = useSettings();
   const { resetSession, permission, requestPermission, live } = useTracking();
   const [showRatios, setShowRatios] = useState(false);
+
+  const router = useRouter();
+  const [photos, setPhotos] = useState<CarPhotos>(NO_PHOTOS);
+
+  // Al volver de la pantalla de fotos la tarjeta debe reflejar el cambio.
+  useFocusEffect(
+    useCallback(() => {
+      loadCarPhotos().then(setPhotos).catch(() => {});
+    }, [])
+  );
 
   const v = settings.vehicle;
 
@@ -78,22 +91,14 @@ export default function GarageScreen() {
       <Text style={styles.screenTitle}>Garaje</Text>
 
       {/* ------------------- tarjeta del vehículo ------------------- */}
-      <LinearGradient
-        colors={['rgba(34,211,238,0.16)', 'rgba(34,211,238,0.02)']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.heroCard}
-      >
-        <View style={styles.heroTop}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.heroNickname}>{v.nickname}</Text>
-            <Text style={styles.heroModel}>
-              {v.make} {v.model} · {v.year}
-            </Text>
-          </View>
-          <Ionicons name="car-sport" size={34} color={colors.accent} />
-        </View>
+      <CarHero
+        vehicle={v}
+        frames={photos.frames}
+        driverName={settings.driverName}
+        onPressOptions={() => router.push('/car-photos')}
+      />
 
+      <View style={styles.heroSpecsCard}>
         <View style={styles.heroSpecs}>
           <HeroSpec value={`${v.powerCv}`} unit="CV" label="Potencia" />
           <HeroSpec value={`${v.torqueNm}`} unit="Nm" label="Par" />
@@ -104,13 +109,22 @@ export default function GarageScreen() {
             label="0-100"
           />
         </View>
-
         <View style={styles.heroBadges}>
-          <Badge label={v.trim.toUpperCase()} />
+          <Badge label={v.nickname.toUpperCase()} />
           <Badge label={`${powerToWeight(v).toFixed(1)} KG/CV`} tint={colors.lime} />
           <Badge label={`${v.consumptionMixed} L/100 KM`} tint={colors.amber} />
         </View>
-      </LinearGradient>
+      </View>
+
+      <Pressable onPress={() => router.push('/car-photos')} style={styles.photosChip}>
+        <Ionicons name="camera-outline" size={16} color={colors.accent} />
+        <Text style={styles.photosChipText}>
+          {photos.frames.length === 0
+            ? 'Pon fotos de tu Polo y gíralo en 360°'
+            : `${photos.frames.length} fotos · toca para cambiarlas`}
+        </Text>
+        <Ionicons name="chevron-forward" size={14} color={colors.textFaint} />
+      </Pressable>
 
       {/* ------------------- potencia real a la altitud actual ------------------- */}
       {effect && (
@@ -321,6 +335,25 @@ export default function GarageScreen() {
           value={v.nickname}
           onChange={(nickname) => updateVehicle({ nickname })}
           placeholder="Mi Polo"
+        />
+        <Divider />
+        <TextRow
+          label="Tu nombre"
+          icon="person-outline"
+          value={settings.driverName}
+          onChange={(driverName) => update({ driverName })}
+          placeholder="Para el saludo"
+        />
+        <Divider />
+        <Row
+          label="Fotos del carro"
+          hint={
+            photos.frames.length === 0
+              ? 'Sin fotos: se muestra la ilustración'
+              : `${photos.frames.length} fotos guardadas`
+          }
+          icon="camera-outline"
+          onPress={() => router.push('/car-photos')}
         />
         <Divider />
         <NumberRow
@@ -594,17 +627,29 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   screenTitle: { ...font.title, fontSize: 30, color: colors.text, marginBottom: spacing.lg },
 
-  heroCard: {
+  heroSpecsCard: {
+    marginTop: spacing.md,
+    backgroundColor: colors.surface,
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: 'rgba(34,211,238,0.28)',
+    borderColor: colors.border,
     padding: spacing.lg,
     gap: spacing.lg,
   },
-  heroTop: { flexDirection: 'row', alignItems: 'center' },
-  heroNickname: { fontSize: 24, fontWeight: '700', color: colors.text, letterSpacing: -0.5 },
-  heroModel: { fontSize: 13, color: colors.textMuted, marginTop: 3, fontWeight: '600' },
   heroSpecs: { flexDirection: 'row', justifyContent: 'space-between' },
+  photosChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.pill,
+    paddingVertical: 11,
+    paddingHorizontal: spacing.lg,
+  },
+  photosChipText: { flex: 1, fontSize: 13, color: colors.textMuted, fontWeight: '600' },
   heroSpec: { alignItems: 'flex-start' },
   heroSpecValue: { fontSize: 22, fontWeight: '700', color: colors.text, fontVariant: ['tabular-nums'] },
   heroSpecUnit: { fontSize: 11, color: colors.textMuted, fontWeight: '600' },
