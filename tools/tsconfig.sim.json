@@ -7,7 +7,11 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "baseUrl": "..",
-    "paths": { "@/*": ["src/*"] },
+    "paths": {
+      "@/*": [
+        "src/*"
+      ]
+    },
     "rootDir": "../src",
     "outDir": "../.sim-build"
   },
@@ -17,6 +21,8 @@
     "../src/utils/geo.ts",
     "../src/utils/format.ts",
     "../src/utils/altitude.ts",
-    "../src/vehicles/polo.ts"
+    "../src/utils/gauge.ts",
+    "../src/vehicles/polo.ts",
+    "../src/theme/theme.ts"
   ]
 }

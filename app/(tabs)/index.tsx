@@ -59,10 +59,11 @@ export default function SpeedScreen() {
   const unitLabel = speedUnitLabel(unit);
   const vehicle = settings.vehicle;
 
-  // Escala del dial: redondeada hacia arriba desde la máxima del vehículo.
+  // Escala del dial: la máxima del vehículo redondeada a la veintena de arriba.
+  // Estirarla más solo desperdiciaría barrido en velocidades que el carro no da.
   const gaugeMax = useMemo(() => {
     const top = toDisplaySpeed(vehicle.topSpeedKmh, unit);
-    return Math.ceil((top * 1.08) / 20) * 20;
+    return Math.ceil(top / 20) * 20;
   }, [vehicle.topSpeedKmh, unit]);
 
   const shown = trip ?? live;
@@ -186,11 +187,6 @@ export default function SpeedScreen() {
             vehicleTop={toDisplaySpeed(vehicle.topSpeedKmh, unit)}
             overLimit={overLimit}
             size={320}
-            caption={
-              gear
-                ? `${gear.gear}ª · ${formatNumber(Math.round(gear.rpm / 50) * 50)} rpm aprox.`
-                : undefined
-            }
           />
         </View>
 

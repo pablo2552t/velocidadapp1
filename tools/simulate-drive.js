@@ -26,6 +26,7 @@ const { POLO_TRACK_2026, estimateGearAndRpm, kmhPer1000Rpm } = require(path.join
 const { simplify } = require(path.join(BUILD, 'utils/geo.js'));
 const { altitudeEffect, sae1349Factor, standardPressureKpa } = require(path.join(BUILD, 'utils/altitude.js'));
 const { percentileFromHistogram, HIST_BIN_KMH } = require(path.join(BUILD, 'services/speedStats.js'));
+const { gaugeDirection, gaugeRotation, gaugeDegFor } = require(path.join(BUILD, 'utils/gauge.js'));
 
 const M_PER_DEG_LAT = 111132;
 const T0 = 1700000000000;
@@ -248,6 +249,32 @@ function makeFix(tSec, northM, speedMs, altitude, accuracy = 5) {
   const teorico = (100 - 60) / 3.6 / a;
   check('60 → 100 en marcha (s)', s.perf.roll60_100, teorico, 0.3);
   check('no inventa un 0-100', s.perf.t0_100 == null ? 1 : 0, 1, 0);
+}
+
+// ---------------------------------------------------------------- 11. dial
+{
+  console.log('\n— Orientación del velocímetro —');
+  // En SVG la y crece hacia abajo: y negativa es arriba de la pantalla.
+  const parado = gaugeDirection(0, 200);
+  check('en 0 apunta a la izquierda', parado.x, -0.707, 0.02);
+  check('en 0 apunta hacia abajo', parado.y, +0.707, 0.02);
+
+  const mitad = gaugeDirection(100, 200);
+  check('a media escala apunta arriba', mitad.y, -1, 0.02);
+  check('a media escala está centrado', mitad.x, 0, 0.02);
+
+  const tope = gaugeDirection(200, 200);
+  check('al tope apunta a la derecha', tope.x, +0.707, 0.02);
+  check('al tope apunta hacia abajo', tope.y, +0.707, 0.02);
+
+  // La aguja se dibuja apuntando arriba, así que en 0 hay que girarla 135°
+  // en contra del reloj. Aquí estaba el error de 180°.
+  check('rotación de la aguja en 0', gaugeRotation(0, 200), -135, 0.01);
+  check('rotación de la aguja al tope', gaugeRotation(200, 200), 135, 0.01);
+  check('el barrido crece con la velocidad',
+    gaugeDegFor(150, 200) > gaugeDegFor(50, 200) ? 1 : 0, 1, 0);
+  check('se acota por encima del máximo', gaugeDegFor(500, 200), gaugeDegFor(200, 200), 0.01);
+  check('se acota por debajo de cero', gaugeDegFor(-30, 200), gaugeDegFor(0, 200), 0.01);
 }
 
 console.log(failures === 0 ? '\nTodas las comprobaciones pasaron.' : `\n${failures} comprobaciones fallaron.`);

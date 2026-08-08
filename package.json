@@ -10,7 +10,8 @@
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "icons": "node tools/generate-icons.js",
-    "test:engine": "tsc -p tools/tsconfig.sim.json && node tools/simulate-drive.js"
+    "test:engine": "tsc -p tools/tsconfig.sim.json && node tools/simulate-drive.js",
+    "preview:gauge": "tsc -p tools/tsconfig.sim.json && node tools/preview-gauge.js"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

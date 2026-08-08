@@ -86,9 +86,10 @@ npx expo run:ios --device    # instala en el iPhone conectado
 Otros comandos:
 
 ```bash
-npm run typecheck    # comprueba tipos
-npm run test:engine  # simulación de conducción contra el motor de cálculo
-npm run icons        # regenera los iconos de la app
+npm run typecheck      # comprueba tipos
+npm run test:engine    # simulación de conducción contra el motor de cálculo
+npm run preview:gauge  # dibuja el velocímetro en un HTML, para verlo sin el teléfono
+npm run icons          # regenera los iconos de la app
 ```
 
 ---
@@ -179,6 +180,10 @@ Decisiones que importan:
   worklets, y la aguja no da tirones.
 - **La traza se simplifica al guardar** (Ramer-Douglas-Peucker, 4 m): conserva la forma del
   recorrido con una fracción de los puntos.
+- **La geometría del dial vive aparte del componente** (`src/utils/gauge.ts`) y tiene sus
+  propias comprobaciones. Ahí se coló un error de 180° que dejaba la aguja apuntando
+  arriba-derecha con el carro parado; ahora un test lo impide. `npm run preview:gauge`
+  dibuja el dial a varias velocidades en un HTML para revisarlo sin el teléfono.
 
 ### Verificación
 
