@@ -219,7 +219,9 @@ function render(size, opaque) {
   return encodePng(size, size, rgba);
 }
 
-const outDir = path.join(__dirname, '..', 'assets');
+// `assets/images` es la ruta que espera la plantilla estándar de Expo; algunas
+// herramientas la asumen aunque app.json apunte a otro sitio.
+const outDir = path.join(__dirname, '..', 'assets', 'images');
 fs.mkdirSync(outDir, { recursive: true });
 
 const targets = [

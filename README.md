@@ -3,7 +3,13 @@
 Medidor de velocidad en tiempo real con mapa, historial y cronómetro, hecho a la medida
 de un **Volkswagen Polo Track 2026 1.6 MSI** y de un **iPhone 15 Pro**.
 
-React Native + Expo SDK 57. Uso personal.
+React Native + Expo SDK 54. Uso personal.
+
+> **El SDK está anclado a la versión 54 a propósito.** Expo Go en la App Store lleva meses
+> sin poder actualizarse porque Apple no aprueba las versiones nuevas, así que SDK 54 es
+> lo más reciente que corre en un iPhone real sin pagar la cuenta de Apple Developer.
+> Si subes el proyecto a SDK 55, 56 o 57 el iPhone responderá *"Project is incompatible
+> with this version of Expo Go"*. Ver [Expo Go y la App Store](https://expo.dev/changelog/expo-go-and-app-store-may-2026).
 
 ---
 
@@ -45,10 +51,13 @@ npm install
 npx expo start
 ```
 
-Escanea el QR con la cámara del iPhone. Para probar rápido basta **Expo Go**.
+Escanea el QR con la cámara del iPhone. Para probar rápido basta **Expo Go**, que hay que
+tener actualizado a la última versión de la App Store.
 
-Para el uso real en el carro conviene una **build de desarrollo**, que es la única forma
-de que el viaje siga grabándose con la pantalla apagada o con otra app abierta:
+En Expo Go funciona todo menos el seguimiento en segundo plano: la grabación se detiene si
+bloqueas el iPhone o cambias de app. Para el uso real en el carro conviene una **build de
+desarrollo**, que sí lo permite (y requiere macOS con Xcode, o EAS Build con cuenta de
+Apple Developer):
 
 ```bash
 npx expo prebuild            # genera el proyecto iOS
